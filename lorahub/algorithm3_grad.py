@@ -364,21 +364,25 @@ def lorahub_learning(lora_module_list: List[str],
         total_loss = 0
         
         for _, batch in enumerate(train_dataloader):
+            # print(f"Memory allocated for batch: {torch.cuda.memory_allocated(device)} bytes")
             optimizer.zero_grad()
             batch = {k: v.to(device) for k, v in batch.items()}
             outputs = model(**batch)
             loss = outputs.loss/len(batch["input_ids"])
+            # print(f"Memory allocated for batch: {torch.cuda.memory_allocated(device)} bytes")
             total_loss += loss.item()
             loss.backward()
+            # print(f"Memory allocated for batch: {torch.cuda.memory_allocated(device)} bytes")
             l1reg=default_l1_regularization(params)
             l1reg.backward()
-            starttime = time.time()
+
             for name, param in model_param_name_lookup.items():
                 for i,j,peft_model_id in key_params_lookup[name]:
                     params.grad[i,j] += (param.grad * cache[peft_model_id][name]).sum()
             
             optimizer.step()
             update_lora()
+            del batch, outputs, loss  # Clear memory
             # print("update time:",time.time()-starttime)
         avg_loss = total_loss / len(train_dataloader) + l1reg.item()
         if step % 10 == 0:
@@ -392,19 +396,20 @@ def lorahub_learning(lora_module_list: List[str],
                 patience_counter += 1
                 if patience_counter >= patience:
                     print(f"Early stopping at step {step}")
-                    
                     break
         else:
             best_params = params.detach().clone()
     
     optimized_weights = best_params.cpu().numpy()
     #save value to txt
-    with open('recommendation.txt', 'w') as f:
-        for item in optimized_weights:
-            f.write("%s\n" % item)
+    # with open('recommendation.txt', 'w') as f:
+    #     for item in optimized_weights:
+    #         f.write("%s\n" % item)
     final_lora = get_final_weights(optimized_weights, lora_module_list, cache)
     # set the final weights
     set_peft_model_state_dict(model, final_lora)
     model = model.merge_and_unload()
+    del params, optimizer, final_state_dict,final_lora,train_dataloader,dataset
+    del key_params_lookup, model_param_name_lookup,optimized_weights,
     # print("test")
-    return optimized_weights, model, tokenizer
+    return None, model, tokenizer

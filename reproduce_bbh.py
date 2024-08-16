@@ -7,6 +7,7 @@ import random
 from random import shuffle
 import sys
 import pandas as pd
+import torch
 def evaluate_flan_results_zero_shot(folder, flan_model_name):
     sub_dirs = os.listdir(folder)
     result={}
@@ -57,7 +58,7 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
     sub_dirs = os.listdir(folder)
     result={'lorahub avg acc':{},'lorahub max acc':{}}
     # 5 seeds used in our experiments
-    for sub_dir in sub_dirs:
+    for sub_dir in sub_dirs[1:]:
         try:
             # if "boolean_expression" in sub_dir:
             #     continue
@@ -91,7 +92,7 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
             step_result={}
             for step in range(30,31,1):
                 for lora_num in range(100,101,1):
-                    for seed in range(1,4):
+                    for seed in range(2,4):
                         random.seed(seed)
                         print("Evaluating on task (lorahub): ", sub_dir, "with seed:", seed)
         
@@ -118,6 +119,10 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
                                                         batch_size=10,
                                                         # can set as None if you do not have the ground truth
                                                         example_outputs=task_outputs)
+                        del model
+                        torch.cuda.empty_cache()
+                        torch.cuda.reset_peak_memory_stats()
+                        input("press any key to continue")
                         print(f"task{sub_dir},seed{seed},step{step},lora_num{lora_num},acc:{task_acc}")
                         task_perf_list.append(task_acc)
                         # break
