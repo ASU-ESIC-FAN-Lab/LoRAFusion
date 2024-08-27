@@ -1,7 +1,7 @@
 from lorahub.algorithm import lorahub_inference
 import os
 import json
-from lorahub.algorithm3_grad import lorahub_learning, lorahub_inference
+from lorahub.algorithm_fft import lorahub_learning, lorahub_inference
 from lorahub.constant import LORA_MODULE_NAMES
 import random
 from random import shuffle
@@ -58,8 +58,8 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
     sub_dirs = os.listdir(folder)
     result={'lorahub avg acc':{},'lorahub max acc':{}}
     # 5 seeds used in our experiments
-    for sub_dir in sub_dirs[1:]:
-        try:
+    for sub_dir in sub_dirs:
+        # try:
             # if "boolean_expression" in sub_dir:
             #     continue
             print("Evaluating on task (lorahub): ", sub_dir)
@@ -90,9 +90,10 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
 
             task_perf_list = []
             step_result={}
-            for step in range(30,31,1):
-                for lora_num in range(100,101,1):
-                    for seed in range(2,4):
+            for step in range(15,16,1):
+                for lora_num in range(1,2,1):
+                    for seed in range(1,4):
+                        lr=0.0001
                         random.seed(seed)
                         print("Evaluating on task (lorahub): ", sub_dir, "with seed:", seed)
         
@@ -106,7 +107,7 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
                                                                             example_inputs=example_inputs,
                                                                             example_outputs=examples_outputs,
                                                                             max_inference_step=step,
-                                                                            batch_size=5,lr=0.02)
+                                                                            batch_size=5,lr=lr)
 
                         # print("module_weights:", module_weights)
 
@@ -122,7 +123,7 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
                         del model
                         torch.cuda.empty_cache()
                         torch.cuda.reset_peak_memory_stats()
-                        input("press any key to continue")
+                        # input("press any key to continue")
                         print(f"task{sub_dir},seed{seed},step{step},lora_num{lora_num},acc:{task_acc}")
                         task_perf_list.append(task_acc)
                         # break
@@ -130,16 +131,16 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
                     print("average perf:", avg_perf, "best perf:", max_perf)
                     result["lorahub avg acc"][sub_dir]=avg_perf
                     result["lorahub max acc"][sub_dir]=max_perf
-                    save_name=f"step{step}_train{example_num}_lora_num{lora_num}_uni_l1.csv"
+                    save_name=f"epo{step}_train{example_num}_lora_num{lora_num}_lr{lr}_fft.csv"
                     tmp_result=pd.DataFrame(result)
                     tmp_result.to_csv(os.path.join("results", save_name))
                     step_result[step]=(avg_perf,max_perf)
                 
             # print("step_result:",step_result)
             # break
-        except Exception as e:
-            print("error:",e)
-            continue
+        # except Exception as e:
+        #     print("error:",e)
+        #     continue
     result_pd=pd.DataFrame(result)
     return result,result_pd
 if __name__ == "__main__":
