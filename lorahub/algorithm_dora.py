@@ -33,6 +33,7 @@ def load_base_model_and_lora_modules(lora_module_list: List[str], model_name_or_
     device = "cuda" if torch.cuda.is_available() else "cpu"
     # load basic model
     default_peft_model_id = lora_module_list[0]
+    # print(default_peft_model_id)
     #dora config
     dora_config = PeftConfig.from_pretrained(default_peft_model_id)
     dora_config.use_dora = True
@@ -55,26 +56,7 @@ def load_base_model_and_lora_modules(lora_module_list: List[str], model_name_or_
     peft_model = peft_model.to(device)
     peft_model.eval()
 
-    print("> Begin to load lora modules")
     cache = {}
-
-    first_dict = None
-
-    for peft_model_id in tqdm(lora_module_list):
-        # print("> Loading {} ...".format(peft_model_id))
-        cur_peft_model = PeftModel.from_pretrained(base_model, peft_model_id)
-        cache[peft_model_id] = copy.deepcopy(get_peft_model_state_dict(cur_peft_model))
-
-        if first_dict is None:
-            first_dict = cache[peft_model_id]
-        # check whether the LoRA can be merged into one 
-        try:
-            # detect whether the arch is the same
-            for key in first_dict.keys():
-                assert first_dict[key].shape == cache[peft_model_id][key].shape
-        except:
-            raise Exception(f'LoRA Modules {peft_model_id} cannot be merged since it has a different arch (e.g., rank).')
-               
     return peft_model, tokenizer, cache
 
 def preprocess_function(examples, tokenizer):
@@ -193,7 +175,6 @@ def get_final_weights(weights, lora_module_list, cache):
         if i == 0:
             for j,key in enumerate(keys):
                 if 'encoder' in key:
-                    
                     final_state_dict[key] = weights[i][j//4] * lora_state_dict[key]
                 else:
                     final_state_dict[key] = weights[i][j//8+12] * lora_state_dict[key]
@@ -282,7 +263,6 @@ def lorahub_learning(lora_module_list: List[str],
                      seed=42,
                      early_stopping=True,
                      lr=0.01):
-    print("init dora learning")
     # set seed for reproducibility
     random.seed(seed)
     numpy.random.seed(seed)
@@ -303,78 +283,18 @@ def lorahub_learning(lora_module_list: List[str],
         batch_size=data_batch_size,
         pin_memory=True,  # If True, the data loader will copy tensors into CUDA pinned memory before returning them
     )
-    
-    
-    # set up the limit of the weights dimension 24 * number_of_loras
-    num_blocks=len(cache[lora_module_list[0]].keys())//6
-    print("num_blocks:",num_blocks)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    params = torch.empty(number_of_loras, num_blocks, device=device, requires_grad=True)
-    # torch.nn.init.xavier_uniform_(params)
-    optimizer = optim.Adam([params], lr=lr, weight_decay=0.00000) #weight decay
-    magnitude_params = []
-    
-    
-    final_state_dict = {}
-    keys = cache[lora_module_list[0]].keys()
-    key_params_lookup = {} #parameter name to the corresponding lora weights for different modules
-    model_param_name_lookup={}#parameter name in the model to correspond parameter in model 
+    params_list=[]
     for name, param in model.named_parameters():
-        # print(name)
         if "lora" in name:
-            name_processed = name.replace(".default","")
-            if name_processed in cache[lora_module_list[0]]:
-                model_param_name_lookup[name_processed]=param
-                param.requires_grad = True
-        if "lora_magnitude_vector" in name:
-            # print(name)
+        # if "lora_magnitude_vector" in name:
             param.requires_grad = True
-            magnitude_params.append(param)
-    # print(len(magnitude_params))
-    magnitude_optimizer = optim.Adam(magnitude_params, lr=0.005, weight_decay=0.00000)
-    # print(len(model_param_name_lookup.keys()))
-    # print(model_param_name_lookup.keys())
+            params_list.append(param)
+    print(len(params_list))
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    def update_lora():
-        for i, peft_model_id in enumerate(lora_module_list):
-            lora_state_dict = cache[peft_model_id]
-            if i == 0:
-                for j,key in enumerate(keys):
-                    if 'encoder' in key:
-                        # print(final_state_dict[key].is_cuda)
-                        final_state_dict[key] = params[i][j//4] * lora_state_dict[key]
-                        key_params_lookup[key] = [(i,j//4,peft_model_id)]
-                    
-                    else:
-                        final_state_dict[key] = params[i][j//8+12] * lora_state_dict[key]
-                        key_params_lookup[key] = [(i,j//8+12,peft_model_id)]
-            else:
-                for j,key in enumerate(keys):
-                    if 'encoder' in key:
-                        final_state_dict[key] = (
-                            final_state_dict[key] + params[i][j//4] * lora_state_dict[key]
-                        )
-                        key_params_lookup[key].append((i,j//4,peft_model_id))
-                    else:
-                        final_state_dict[key] = (
-                            final_state_dict[key] + params[i][j//8+12] * lora_state_dict[key]
-                        )
-                        key_params_lookup[key].append((i,j//8+12,peft_model_id))
-        for name,param in model_param_name_lookup.items():
-            param.data.copy_(final_state_dict[name])
-            param.grad = None
-    
-        # for name, param in model.named_parameters():
-        #     #extract string .default from the name
-        #     name_processed = name.replace(".default","")
-        #     if name_processed in final_state_dict:
-        #         # print(f"{name} requires gradient.")
-                
-        #         param.data.copy_(final_state_dict[name_processed])
-        #         param.requires_grad = True
-        #         param.grad = None
-    update_lora()
-    # print("> Begin to perform gradient optimization ...")
+    # torch.nn.init.xavier_uniform_(params)
+    optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=lr,weight_decay=0.00001)
+
     patience = 10
     best_loss = float("inf")
     best_params = None
@@ -385,52 +305,37 @@ def lorahub_learning(lora_module_list: List[str],
         for _, batch in enumerate(train_dataloader):
             # print(f"Memory allocated for batch: {torch.cuda.memory_allocated(device)} bytes")
             optimizer.zero_grad()
-            magnitude_optimizer.zero_grad()
             batch = {k: v.to(device) for k, v in batch.items()}
             outputs = model(**batch)
             loss = outputs.loss/len(batch["input_ids"])
             # print(f"Memory allocated for batch: {torch.cuda.memory_allocated(device)} bytes")
             total_loss += loss.item()
             loss.backward()
-            # print(f"Memory allocated for batch: {torch.cuda.memory_allocated(device)} bytes")
-            l1reg=default_l1_regularization(params)
-            l1reg.backward()
-
-            for name, param in model_param_name_lookup.items():
-                for i,j,peft_model_id in key_params_lookup[name]:
-                    params.grad[i,j] += (param.grad * cache[peft_model_id][name]).sum()
-            
             optimizer.step()
-            magnitude_optimizer.step()
-            update_lora()
             del batch, outputs, loss  # Clear memory
             # print("update time:",time.time()-starttime)
-        avg_loss = total_loss / len(train_dataloader) + l1reg.item()
-        if step % 10 == 0:
+        avg_loss = total_loss / len(train_dataloader)
+        if step % 1 == 0:
             print(f"Step {step}, loss {avg_loss}")
-        if early_stopping:
-            if avg_loss < best_loss:
-                best_loss = avg_loss
-                best_params = params.detach().clone()
-                patience_counter = 0
-            else:
-                patience_counter += 1
-                if patience_counter >= patience:
-                    print(f"Early stopping at step {step}")
-                    break
-        else:
-            best_params = params.detach().clone()
+        # if early_stopping:
+        #     if avg_loss < best_loss:
+        #         best_loss = avg_loss
+        #         best_params = params.detach().clone()
+        #         patience_counter = 0
+        #     else:
+        #         patience_counter += 1
+        #         if patience_counter >= patience:
+        #             print(f"Early stopping at step {step}")
+        #             break
+        # else:
+        #     best_params = params.detach().clone()
     
-    optimized_weights = best_params.cpu().numpy()
-    #save value to txt
-    # with open('recommendation.txt', 'w') as f:
-    #     for item in optimized_weights:
-    #         f.write("%s\n" % item)
-    final_lora = get_final_weights(optimized_weights, lora_module_list, cache)
+
     # set the final weights
-    set_peft_model_state_dict(model, final_lora)
+    # set_peft_model_state_dict(model, final_lora)
     model = model.merge_and_unload()
-    del params, optimizer, final_state_dict,final_lora,train_dataloader,dataset
-    del key_params_lookup, model_param_name_lookup,optimized_weights,
+    del optimizer,train_dataloader,dataset
+    # del  optimizer, final_state_dict,final_lora,train_dataloader,dataset
+    # del key_params_lookup, model_param_name_lookup,optimized_weights,
     # print("test")
     return None, model, tokenizer

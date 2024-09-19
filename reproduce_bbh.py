@@ -1,7 +1,7 @@
 from lorahub.algorithm import lorahub_inference
 import os
 import json
-from lorahub.algorithm_fft import lorahub_learning, lorahub_inference
+from lorahub.algorithm3_dora import lorahub_learning, lorahub_inference
 from lorahub.constant import LORA_MODULE_NAMES
 import random
 from random import shuffle
@@ -56,7 +56,9 @@ def evaluate_flan_results_few_shot(folder, flan_model_name):
 7
 def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results"):
     sub_dirs = os.listdir(folder)
-    result={'lorahub avg acc':{},'lorahub max acc':{}}
+    sub_dirs= sorted(sub_dirs)
+    result={}
+    # result={'lorahub avg acc':{},'lorahub max acc':{}}
     # 5 seeds used in our experiments
     for sub_dir in sub_dirs:
         # try:
@@ -88,51 +90,58 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
                 task_inputs.append(example["context"])
                 task_outputs.append(example["completion"])
 
-            task_perf_list = []
             step_result={}
-            for step in range(15,16,1):
-                for lora_num in range(1,2,1):
-                    for seed in range(1,4):
-                        lr=0.0001
-                        random.seed(seed)
-                        print("Evaluating on task (lorahub): ", sub_dir, "with seed:", seed)
-        
-                        def get_lora_module_list(lora_num=40):
-                            return random.sample(LORA_MODULE_NAMES, lora_num) #what 
-                        # get a list of modules to be used in the composition
-                        modules = get_lora_module_list(lora_num)
+            for step in range(20,21,1):
+                for lora_num in range(20,21,1):
+                    for lr_n in range(20,21,5):
+                        lr=lr_n/1000
+                        print(lr)
+                        task_perf_list = []
+                        if (step,lora_num) not in result.keys():
+                            result[(step,lora_num)]={'lorahub avg acc':{},'lorahub max acc':{}}
 
-                        # perform LoRAHub learning
-                        module_weights, model, tokenizer = lorahub_learning(lora_module_list=modules,
-                                                                            example_inputs=example_inputs,
-                                                                            example_outputs=examples_outputs,
-                                                                            max_inference_step=step,
-                                                                            batch_size=5,lr=lr)
+                        for seed in range(1,4):
+                            
+                            # lr=0.001
+                            random.seed(seed)
+                            print("Evaluating on task (lorahub): ", sub_dir, "with seed:", seed)
+            
+                            def get_lora_module_list(lora_num=40):
+                                return random.sample(LORA_MODULE_NAMES, lora_num) #what 
+                            # get a list of modules to be used in the composition
+                            modules = get_lora_module_list(lora_num)
 
-                        # print("module_weights:", module_weights)
+                            # perform LoRAHub learning
+                            module_weights, model, tokenizer = lorahub_learning(lora_module_list=modules,
+                                                                                example_inputs=example_inputs,
+                                                                                example_outputs=examples_outputs,
+                                                                                max_inference_step=step,
+                                                                                batch_size=5,lr=lr)
 
-                        """
-                        Perform inference to get predictions
-                        """
-                        _, task_acc = lorahub_inference(example_inputs=task_inputs,
-                                                        model_or_name_path=model,
-                                                        tokenizer_or_tokenizer_path=tokenizer,
-                                                        batch_size=10,
-                                                        # can set as None if you do not have the ground truth
-                                                        example_outputs=task_outputs)
-                        del model
-                        torch.cuda.empty_cache()
-                        torch.cuda.reset_peak_memory_stats()
-                        # input("press any key to continue")
-                        print(f"task{sub_dir},seed{seed},step{step},lora_num{lora_num},acc:{task_acc}")
-                        task_perf_list.append(task_acc)
+                            # print("module_weights:", module_weights)
+
+                            """
+                            Perform inference to get predictions
+                            """
+                            _, task_acc = lorahub_inference(example_inputs=task_inputs,
+                                                            model_or_name_path=model,
+                                                            tokenizer_or_tokenizer_path=tokenizer,
+                                                            batch_size=10,
+                                                            # can set as None if you do not have the ground truth
+                                                            example_outputs=task_outputs)
+                            del model
+                            torch.cuda.empty_cache()
+                            torch.cuda.reset_peak_memory_stats()
+                            # input("press any key to continue")
+                            print(f"task{sub_dir},seed{seed},step{step},lora_num{lora_num},acc:{task_acc}")
+                            task_perf_list.append(task_acc)
                         # break
                     avg_perf, max_perf = sum(task_perf_list) / len(task_perf_list), max(task_perf_list)
                     print("average perf:", avg_perf, "best perf:", max_perf)
-                    result["lorahub avg acc"][sub_dir]=avg_perf
-                    result["lorahub max acc"][sub_dir]=max_perf
-                    save_name=f"epo{step}_train{example_num}_lora_num{lora_num}_lr{lr}_fft.csv"
-                    tmp_result=pd.DataFrame(result)
+                    result[(step,lora_num)]["lorahub avg acc"][sub_dir]=avg_perf
+                    result[(step,lora_num)]["lorahub max acc"][sub_dir]=max_perf
+                    save_name=f"epo{step}_train{example_num}_lora_num{lora_num}_lr{lr}_dora_l2.csv"
+                    tmp_result=pd.DataFrame(result[(step,lora_num)])
                     tmp_result.to_csv(os.path.join("results", save_name))
                     step_result[step]=(avg_perf,max_perf)
                 
@@ -152,4 +161,4 @@ if __name__ == "__main__":
     # few_result_df.to_csv(os.path.join(result_folder, "few_result.csv"))
     # five shot for lorahub models
     lorahub_result,lorahub_result_df=evaluate_lorahub_results_few_shot("data_bbh", "google/flan-t5-large")
-    lorahub_result_df.to_csv(os.path.join(result_folder, "lorahub_result_weight_100t_100lora_uni_l1.csv"))
+    lorahub_result_df.to_csv(os.path.join(result_folder, "lorahub_result_dora.csv"))
