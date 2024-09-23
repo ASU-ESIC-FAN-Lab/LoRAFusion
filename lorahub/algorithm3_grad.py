@@ -378,6 +378,7 @@ def lorahub_learning(lora_module_list: List[str],
 
             for name, param in model_param_name_lookup.items():
                 for i,j,peft_model_id in key_params_lookup[name]:
+                    print(param.grad)
                     params.grad[i,j] += (param.grad * cache[peft_model_id][name]).sum()
             
             optimizer.step()

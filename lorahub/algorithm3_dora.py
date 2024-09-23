@@ -379,6 +379,11 @@ def lorahub_learning(lora_module_list: List[str],
     best_loss = float("inf")
     best_params = None
     patience_counter = 0
+    tk=list(model_param_name_lookup.items())[0][0]
+    print(list(model_param_name_lookup.items())[0])
+    print(final_state_dict[tk])
+    # print(key_params_lookup[tk])
+    print(params[0][0])
     for step in range(max_inference_step):
         total_loss = 0
         
@@ -398,6 +403,7 @@ def lorahub_learning(lora_module_list: List[str],
 
             for name, param in model_param_name_lookup.items():
                 for i,j,peft_model_id in key_params_lookup[name]:
+                    print(param.grad)
                     params.grad[i,j] += (param.grad * cache[peft_model_id][name]).sum()
             
             optimizer.step()
@@ -406,6 +412,11 @@ def lorahub_learning(lora_module_list: List[str],
             del batch, outputs, loss  # Clear memory
             # print("update time:",time.time()-starttime)
         avg_loss = total_loss / len(train_dataloader) + l1reg.item()
+        #print first item of model_param_name_lookup
+        print(list(model_param_name_lookup.items())[0])
+        print(final_state_dict[tk])
+        # print(key_params_lookup[tk])
+        print(params[0][0])
         if step % 10 == 0:
             print(f"Step {step}, loss {avg_loss}")
         if early_stopping:
