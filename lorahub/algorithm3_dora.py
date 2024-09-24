@@ -310,10 +310,9 @@ def lorahub_learning(lora_module_list: List[str],
     print("num_blocks:",num_blocks)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     params = torch.empty(number_of_loras, num_blocks, device=device, requires_grad=True)
-    # torch.nn.init.xavier_uniform_(params)
+    torch.nn.init.xavier_uniform_(params)
     optimizer = optim.Adam([params], lr=lr, weight_decay=0.00000) #weight decay
     magnitude_params = []
-    
     
     final_state_dict = {}
     keys = cache[lora_module_list[0]].keys()
@@ -331,10 +330,15 @@ def lorahub_learning(lora_module_list: List[str],
             param.requires_grad = True
             magnitude_params.append(param)
     # print(len(magnitude_params))
-    magnitude_optimizer = optim.Adam(magnitude_params, lr=0.005, weight_decay=0.00000)
+    magnitude_optimizer = optim.Adam(magnitude_params, lr=0.005, weight_decay=0.00001)
     # print(len(model_param_name_lookup.keys()))
     # print(model_param_name_lookup.keys())
-
+    # for name, param in model.named_parameters():
+    #     if "lora_A" in name or "lora_B" in name:
+    #         is_all_zero = torch.all(param.data == 0)
+    #         print(f"name: {name}\n 0 grad:{is_all_zero}")
+    # # return
+    # a=input("press to continue")
     def update_lora():
         for i, peft_model_id in enumerate(lora_module_list):
             lora_state_dict = cache[peft_model_id]
@@ -362,6 +366,7 @@ def lorahub_learning(lora_module_list: List[str],
                         key_params_lookup[key].append((i,j//8+12,peft_model_id))
         for name,param in model_param_name_lookup.items():
             param.data.copy_(final_state_dict[name])
+            # print(param.data)
             param.grad = None
     
         # for name, param in model.named_parameters():
@@ -379,11 +384,11 @@ def lorahub_learning(lora_module_list: List[str],
     best_loss = float("inf")
     best_params = None
     patience_counter = 0
-    tk=list(model_param_name_lookup.items())[0][0]
-    print(list(model_param_name_lookup.items())[0])
-    print(final_state_dict[tk])
+    # tk=list(model_param_name_lookup.items())[0][0]
+    # print(list(model_param_name_lookup.items())[0])
+    # print(final_state_dict[tk])
     # print(key_params_lookup[tk])
-    print(params[0][0])
+    # print(params[0][0])
     for step in range(max_inference_step):
         total_loss = 0
         
@@ -401,9 +406,16 @@ def lorahub_learning(lora_module_list: List[str],
             l1reg=default_l1_regularization(params)
             l1reg.backward()
 
+            # for name, param in model.named_parameters():
+            #     if "lora_A" in name or "lora_B" in name:
+            #         is_all_zero = torch.all(param.grad == 0)
+            #         print(f"name: {name}\n 0 grad:{is_all_zero}")
+            # # return
+            # a=input("press to continue")
+
             for name, param in model_param_name_lookup.items():
                 for i,j,peft_model_id in key_params_lookup[name]:
-                    print(param.grad)
+                    # print(name,param.grad)
                     params.grad[i,j] += (param.grad * cache[peft_model_id][name]).sum()
             
             optimizer.step()
@@ -413,10 +425,10 @@ def lorahub_learning(lora_module_list: List[str],
             # print("update time:",time.time()-starttime)
         avg_loss = total_loss / len(train_dataloader) + l1reg.item()
         #print first item of model_param_name_lookup
-        print(list(model_param_name_lookup.items())[0])
-        print(final_state_dict[tk])
-        # print(key_params_lookup[tk])
-        print(params[0][0])
+        # print(list(model_param_name_lookup.items())[0])
+        # print(final_state_dict[tk])
+        # # print(key_params_lookup[tk])
+        # print(params[0][0])
         if step % 10 == 0:
             print(f"Step {step}, loss {avg_loss}")
         if early_stopping:
