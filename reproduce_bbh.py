@@ -53,7 +53,12 @@ def evaluate_flan_results_few_shot(folder, flan_model_name):
     result_pd=pd.DataFrame({'Few-shot acc':result})
     return result,result_pd
 
-7
+def separate_valid_dataset(example_inputs, examples_outputs, valid_ratio=0.1):
+    example_num = len(example_inputs)
+    valid_num = int(example_num * valid_ratio)
+    valid_inputs, valid_outputs = example_inputs[:valid_num], examples_outputs[:valid_num]
+    train_inputs, train_outputs = example_inputs[valid_num:], examples_outputs[valid_num:]
+    return train_inputs, train_outputs, valid_inputs, valid_outputs
 def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results"):
     sub_dirs = os.listdir(folder)
     sub_dirs= sorted(sub_dirs)
@@ -81,6 +86,8 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
             # take the first 5 examples
             example_num=100
             example_inputs, examples_outputs = example_inputs[:example_num], examples_outputs[:example_num]
+            # separate the training and validation dataset
+            train_inputs, train_outputs, valid_inputs, valid_outputs = separate_valid_dataset(example_inputs, examples_outputs, valid_ratio=0.15)
 
             # load the zero-shot examples for evaluation
             test_file_path = os.path.join(folder, sub_dir, "zero_shot.jsonl")
@@ -113,10 +120,12 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
 
                             # perform LoRAHub learning
                             module_weights, model, tokenizer = lorahub_learning(lora_module_list=modules,
-                                                                                example_inputs=example_inputs,
-                                                                                example_outputs=examples_outputs,
+                                                                                example_inputs=train_inputs,
+                                                                                example_outputs=train_outputs,
                                                                                 max_inference_step=step,
-                                                                                batch_size=5,lr=lr)
+                                                                                batch_size=5,lr=lr,
+                                                                                valid_inputs=valid_inputs,
+                                                                                valid_outputs=valid_outputs)
 
                             # print("module_weights:", module_weights)
 

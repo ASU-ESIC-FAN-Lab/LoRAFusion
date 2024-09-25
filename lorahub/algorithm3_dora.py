@@ -281,7 +281,9 @@ def lorahub_learning(lora_module_list: List[str],
                      get_regular=default_l1_regularization,
                      seed=42,
                      early_stopping=True,
-                     lr=0.01):
+                     lr=0.01,
+                     valid_inputs=None,
+                     valid_outputs=None):
     print("init dora learning")
     # set seed for reproducibility
     random.seed(seed)
@@ -303,6 +305,15 @@ def lorahub_learning(lora_module_list: List[str],
         batch_size=data_batch_size,
         pin_memory=True,  # If True, the data loader will copy tensors into CUDA pinned memory before returning them
     )
+    if valid_inputs is not None:
+        valid_dataset = load_dataset(valid_inputs, valid_outputs, tokenizer)    
+        valid_dataloader = DataLoader(
+            valid_dataset,
+            collate_fn=default_data_collator,
+            batch_size=data_batch_size,
+            pin_memory=True,  # If True, the data loader will copy tensors into CUDA pinned memory before returning them
+        )
+
     
     
     # set up the limit of the weights dimension 24 * number_of_loras
@@ -384,11 +395,7 @@ def lorahub_learning(lora_module_list: List[str],
     best_loss = float("inf")
     best_params = None
     patience_counter = 0
-    # tk=list(model_param_name_lookup.items())[0][0]
-    # print(list(model_param_name_lookup.items())[0])
-    # print(final_state_dict[tk])
-    # print(key_params_lookup[tk])
-    # print(params[0][0])
+
     for step in range(max_inference_step):
         total_loss = 0
         
@@ -406,13 +413,6 @@ def lorahub_learning(lora_module_list: List[str],
             l1reg=default_l1_regularization(params)
             l1reg.backward()
 
-            # for name, param in model.named_parameters():
-            #     if "lora_A" in name or "lora_B" in name:
-            #         is_all_zero = torch.all(param.grad == 0)
-            #         print(f"name: {name}\n 0 grad:{is_all_zero}")
-            # # return
-            # a=input("press to continue")
-
             for name, param in model_param_name_lookup.items():
                 for i,j,peft_model_id in key_params_lookup[name]:
                     # print(name,param.grad)
@@ -423,26 +423,37 @@ def lorahub_learning(lora_module_list: List[str],
             update_lora()
             del batch, outputs, loss  # Clear memory
             # print("update time:",time.time()-starttime)
-        avg_loss = total_loss / len(train_dataloader) + l1reg.item()
-        #print first item of model_param_name_lookup
-        # print(list(model_param_name_lookup.items())[0])
-        # print(final_state_dict[tk])
-        # # print(key_params_lookup[tk])
-        # print(params[0][0])
-        if step % 10 == 0:
-            print(f"Step {step}, loss {avg_loss}")
-        if early_stopping:
-            if avg_loss < best_loss:
-                best_loss = avg_loss
-                best_params = params.detach().clone()
-                patience_counter = 0
+        avg_train_loss = total_loss / len(train_dataloader) + l1reg.item()
+        #valid loss
+        
+        if valid_inputs is not None:
+            
+            with torch.no_grad():
+                total_loss = 0
+                for _, batch in enumerate(valid_dataloader):
+                    batch = {k: v.to(device) for k, v in batch.items()}
+                    outputs = model(**batch)
+                    loss = outputs.loss/len(batch["input_ids"])
+                    total_loss += loss.item()
+                    del batch, outputs, loss
+            avg_valid_loss = total_loss / len(valid_dataloader)
+            if step % 1 == 0:
+                print(f"Step {step}, train loss {avg_train_loss}, valid loss {avg_valid_loss}")
+            if early_stopping:
+                if avg_valid_loss < best_loss:
+                    best_loss = avg_valid_loss
+                    best_params = params.detach().clone()
+                    patience_counter = 0
+                else:
+                    patience_counter += 1
+                    if patience_counter >= patience:
+                        print(f"Early stopping at step {step}")
+                        break
             else:
-                patience_counter += 1
-                if patience_counter >= patience:
-                    print(f"Early stopping at step {step}")
-                    break
+                best_params = params.detach().clone()
         else:
-            best_params = params.detach().clone()
+            print(f"Step {step}, train loss {avg_train_loss}")
+        
     
     optimized_weights = best_params.cpu().numpy()
     #save value to txt
