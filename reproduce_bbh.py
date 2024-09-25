@@ -97,8 +97,8 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
                         lr=lr_n/1000
                         print(lr)
                         task_perf_list = []
-                        if (step,lora_num) not in result.keys():
-                            result[(step,lora_num)]={'lorahub avg acc':{},'lorahub max acc':{}}
+                        if (step,lora_num,lr_n) not in result.keys():
+                            result[(step,lora_num,lr_n)]={'lorahub avg acc':{},'lorahub max acc':{}}
 
                         for seed in range(1,4):
                             
@@ -138,10 +138,10 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
                         # break
                     avg_perf, max_perf = sum(task_perf_list) / len(task_perf_list), max(task_perf_list)
                     print("average perf:", avg_perf, "best perf:", max_perf)
-                    result[(step,lora_num)]["lorahub avg acc"][sub_dir]=avg_perf
-                    result[(step,lora_num)]["lorahub max acc"][sub_dir]=max_perf
-                    save_name=f"epo{step}_train{example_num}_lora_num{lora_num}_lr{lr}_dora_l2.csv"
-                    tmp_result=pd.DataFrame(result[(step,lora_num)])
+                    result[(step,lora_num,lr_n)]["lorahub avg acc"][sub_dir]=avg_perf
+                    result[(step,lora_num,lr_n)]["lorahub max acc"][sub_dir]=max_perf
+                    save_name=f"epo{step}_train{example_num}_lora_num{lora_num}_lr{lr}_dorahub_l2.csv"
+                    tmp_result=pd.DataFrame(result[(step,lora_num,lr_n)])
                     tmp_result.to_csv(os.path.join("results", save_name))
                     step_result[step]=(avg_perf,max_perf)
                 
