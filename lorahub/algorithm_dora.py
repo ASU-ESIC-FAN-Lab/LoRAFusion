@@ -37,6 +37,7 @@ def load_base_model_and_lora_modules(lora_module_list: List[str], model_name_or_
     #dora config
     dora_config = PeftConfig.from_pretrained(default_peft_model_id)
     dora_config.use_dora = True
+    dora_config.lora_dropout = 0.3
     # find the base model
     if model_name_or_path is None:
         model_name_or_path = PeftConfig.from_pretrained(default_peft_model_id).base_model_name_or_path
@@ -262,7 +263,9 @@ def lorahub_learning(lora_module_list: List[str],
                      get_regular=default_l1_regularization,
                      seed=42,
                      early_stopping=True,
-                     lr=0.01):
+                     lr=0.01,
+                     valid_inputs=None,
+                     valid_outputs=None):
     # set seed for reproducibility
     random.seed(seed)
     numpy.random.seed(seed)
@@ -283,6 +286,14 @@ def lorahub_learning(lora_module_list: List[str],
         batch_size=data_batch_size,
         pin_memory=True,  # If True, the data loader will copy tensors into CUDA pinned memory before returning them
     )
+    if valid_inputs is not None:
+        valid_dataset = load_dataset(valid_inputs, valid_outputs, tokenizer)    
+        valid_dataloader = DataLoader(
+            valid_dataset,
+            collate_fn=default_data_collator,
+            batch_size=data_batch_size,
+            pin_memory=True,  # If True, the data loader will copy tensors into CUDA pinned memory before returning them
+        )
     params_list=[]
     for name, param in model.named_parameters():
         if "lora" in name:
@@ -291,11 +302,13 @@ def lorahub_learning(lora_module_list: List[str],
             params_list.append(param)
     print(len(params_list))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+    params = list[filter(lambda p: p.requires_grad, model.parameters())]
+    print(len(list(params)))
     # torch.nn.init.xavier_uniform_(params)
-    optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=lr,weight_decay=0.00001)
+    optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=lr,weight_decay=0.001)
 
     patience = 10
+    warmup_steps = 5
     best_loss = float("inf")
     best_params = None
     patience_counter = 0
@@ -314,22 +327,36 @@ def lorahub_learning(lora_module_list: List[str],
             optimizer.step()
             del batch, outputs, loss  # Clear memory
             # print("update time:",time.time()-starttime)
-        avg_loss = total_loss / len(train_dataloader)
-        if step % 1 == 0:
-            print(f"Step {step}, loss {avg_loss}")
-        # if early_stopping:
-        #     if avg_loss < best_loss:
-        #         best_loss = avg_loss
-        #         best_params = params.detach().clone()
-        #         patience_counter = 0
-        #     else:
-        #         patience_counter += 1
-        #         if patience_counter >= patience:
-        #             print(f"Early stopping at step {step}")
-        #             break
-        # else:
-        #     best_params = params.detach().clone()
-    
+        avg_train_loss = total_loss / len(train_dataloader)
+        if valid_inputs is not None:
+            
+            with torch.no_grad():
+                total_loss = 0
+                for _, batch in enumerate(valid_dataloader):
+                    batch = {k: v.to(device) for k, v in batch.items()}
+                    outputs = model(**batch)
+                    loss = outputs.loss/len(batch["input_ids"])
+                    total_loss += loss.item()
+                    del batch, outputs, loss
+            avg_valid_loss = total_loss / len(valid_dataloader)
+            if step % 1 == 0:
+                print(f"Step {step}, train loss {avg_train_loss}, valid loss {avg_valid_loss}")
+            if early_stopping:
+                if avg_valid_loss < best_loss:
+                    best_loss = avg_valid_loss
+                    # best_params = params.detach().clone()
+                    best_params = copy.deepcopy(model.state_dict())
+                    patience_counter = 0
+                else:
+                    if step > warmup_steps:
+                        patience_counter += 1
+                    if patience_counter >= patience:
+                        print(f"Early stopping at step {step}")
+                        model.load_state_dict(best_params)
+                        break
+        else:
+            print(f"Step {step}, train loss {avg_train_loss}")
+
 
     # set the final weights
     # set_peft_model_state_dict(model, final_lora)

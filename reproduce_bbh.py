@@ -1,7 +1,7 @@
 from lorahub.algorithm import lorahub_inference
 import os
 import json
-from lorahub.algorithm3_dora import lorahub_learning, lorahub_inference
+from lorahub.algorithm_dora import lorahub_learning, lorahub_inference
 from lorahub.constant import LORA_MODULE_NAMES
 import random
 from random import shuffle
@@ -98,10 +98,11 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
                 task_outputs.append(example["completion"])
 
             step_result={}
-            for step in range(20,21,1):
+            for step in range(50,51,1):
                 for lora_num in range(20,21,1):
                     for lr_n in range(20,21,5):
                         lr=lr_n/1000
+                        lr=0.00003
                         print(lr)
                         task_perf_list = []
                         if (step,lora_num,lr_n) not in result.keys():
