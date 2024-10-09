@@ -37,7 +37,7 @@ def load_base_model_and_lora_modules(lora_module_list: List[str], model_name_or_
     #dora config
     dora_config = PeftConfig.from_pretrained(default_peft_model_id)
     dora_config.use_dora = True
-    dora_config.lora_dropout = 0.3
+    dora_config.lora_dropout = 0.2
     # find the base model
     if model_name_or_path is None:
         model_name_or_path = PeftConfig.from_pretrained(default_peft_model_id).base_model_name_or_path
@@ -105,50 +105,6 @@ def load_dataset(example_inputs, example_outputs, tokenizer):
     return processed_datasets
 
 
-def default_get_loss(example_dataset, model, batch_size):
-    """
-    Get the loss of the model on the example dataset.
-    If compute_gradients is True, computes the loss with gradients (for training).
-    Otherwise, computes the loss without gradients (for evaluation).
-    """
-    data_batch_size = len(example_dataset) if batch_size is None else min(len(example_dataset), batch_size)
-    
-    # Create a DataLoader to batch the example dataset
-    train_dataloader = DataLoader(
-        example_dataset,
-        collate_fn=default_data_collator,
-        batch_size=data_batch_size,
-        pin_memory=True,  # If True, the data loader will copy tensors into CUDA pinned memory before returning them
-    )
-    
-    train_loss = 0
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    # model.config.use_cache = False 
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
-    for _, batch in enumerate(train_dataloader):
-        input("before train loader Press Enter to continue...")
-        batch = {k: v.to(device) for k, v in batch.items()}  # Move batch to the appropriate device
-        print(f"Memory allocated for batch: {torch.cuda.memory_allocated(device)} bytes")
-        print(f"Memory reserved: {torch.cuda.memory_reserved(device)} bytes")
-        # optimizer.zero_grad()  # Clear gradients before the forward pass
-        # Compute loss with gradients (training)
-        outputs = model(**batch)  # Forward pass through the model
-        print(f"Memory allocated after output: {torch.cuda.memory_allocated(device)} bytes")
-
-        loss = outputs.loss
-        loss.backward()  # Backpropagate the loss
-        print(f"Memory allocated after backward: {torch.cuda.memory_allocated(device)} bytes")
-        # optimizer.step()  # Update the model's parameters
-        # print(f"Memory allocated after step: {torch.cuda.memory_allocated(device)} bytes")
-        train_loss += loss  # Accumulate the loss
-        del batch, outputs, loss  # Clear memory
-        model.zero_grad() 
-        torch.cuda.empty_cache()  # Clear memory
-        
-        gc.collect()  # Garbage collection
-        print(f"Memory allocated for batch: {torch.cuda.memory_allocated(device)} bytes")
-    
-    return train_loss / len(example_dataset["input"])  # Keep as tensor for backpropagation
 
 def default_l1_regularization(weights):
     """
@@ -197,7 +153,8 @@ def lorahub_inference(example_inputs: List[str],
                       tokenizer_or_tokenizer_path: Union[AutoTokenizer, str],
                       batch_size: int,
                       # if not provided, we do not report the accuracy
-                      example_outputs: List[str]=None):
+                      example_outputs: List[str]=None,
+                      dataset=None):
     
     def accuracy_score(outputs, ground_truths):
         correct = 0
@@ -215,17 +172,19 @@ def lorahub_inference(example_inputs: List[str],
     else:
         model = model_or_name_path
     
-    # load tokenizer
+        
+        # load tokenizer
     if isinstance(tokenizer_or_tokenizer_path, str):
         tokenizer = AutoTokenizer.from_pretrained(tokenizer_or_tokenizer_path)
     else:
         tokenizer = tokenizer_or_tokenizer_path
             
-    # for name, param in model.named_parameters():
-    #     if "lora" not in name:
-    #         param.requires_grad = False
-    # process dataset
-    dataset = load_dataset(example_inputs, example_outputs, tokenizer)
+        # for name, param in model.named_parameters():
+        #     if "lora" not in name:
+        #         param.requires_grad = False
+        # process dataset
+    if not dataset:
+        dataset = load_dataset(example_inputs, example_outputs, tokenizer)
     # use gpu if available
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = model.to(device)
@@ -253,13 +212,15 @@ def lorahub_inference(example_inputs: List[str],
     return example_predictions, task_perf
 
 
+
+
 def lorahub_learning(lora_module_list: List[str], 
                      example_inputs: List[str], 
                      example_outputs: List[str], 
                      max_inference_step: int,
                      model_name_or_path=None,
                      batch_size=None,
-                     get_loss=default_get_loss, 
+                     get_loss=None, 
                      get_regular=default_l1_regularization,
                      seed=42,
                      early_stopping=True,
@@ -294,21 +255,26 @@ def lorahub_learning(lora_module_list: List[str],
             batch_size=data_batch_size,
             pin_memory=True,  # If True, the data loader will copy tensors into CUDA pinned memory before returning them
         )
-    params_list=[]
+    params_direction=[]
+    params_magnitude=[]
     for name, param in model.named_parameters():
-        if "lora" in name:
-        # if "lora_magnitude_vector" in name:
+        # if "lora" in name:
+        if "lora_magnitude_vector" in name:
             param.requires_grad = True
-            params_list.append(param)
-    print(len(params_list))
+            params_magnitude.append(param)
+        elif "lora" in name:
+            param.requires_grad = True
+            params_direction.append(param)
+    print(len(params_direction),len(params_magnitude))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    params = list[filter(lambda p: p.requires_grad, model.parameters())]
-    print(len(list(params)))
+    # params = list[filter(lambda p: p.requires_grad, model.parameters())]
     # torch.nn.init.xavier_uniform_(params)
-    optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=lr,weight_decay=0.001)
+    optimizer_direction = optim.Adam(params_direction, lr=lr,weight_decay=0.001)
+    optimizer_magnitude = optim.Adam(params_magnitude, lr=0.005,weight_decay=0.000)
+    # optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=lr,weight_decay=0.000)
 
-    patience = 10
-    warmup_steps = 5
+    patience = 15
+    warmup_steps = 2
     best_loss = float("inf")
     best_params = None
     patience_counter = 0
@@ -317,14 +283,17 @@ def lorahub_learning(lora_module_list: List[str],
         
         for _, batch in enumerate(train_dataloader):
             # print(f"Memory allocated for batch: {torch.cuda.memory_allocated(device)} bytes")
-            optimizer.zero_grad()
+            optimizer_direction.zero_grad()
+            optimizer_magnitude.zero_grad()
             batch = {k: v.to(device) for k, v in batch.items()}
             outputs = model(**batch)
             loss = outputs.loss/len(batch["input_ids"])
             # print(f"Memory allocated for batch: {torch.cuda.memory_allocated(device)} bytes")
             total_loss += loss.item()
             loss.backward()
-            optimizer.step()
+            # optimizer.step()
+            optimizer_direction.step()
+            optimizer_magnitude.step()
             del batch, outputs, loss  # Clear memory
             # print("update time:",time.time()-starttime)
         avg_train_loss = total_loss / len(train_dataloader)
@@ -338,9 +307,13 @@ def lorahub_learning(lora_module_list: List[str],
                     loss = outputs.loss/len(batch["input_ids"])
                     total_loss += loss.item()
                     del batch, outputs, loss
-            avg_valid_loss = total_loss / len(valid_dataloader)
+                avg_valid_loss = total_loss / len(valid_dataloader)
+                #valid acc
+                _, valid_acc = lorahub_inference(valid_inputs, model, tokenizer, batch_size, valid_outputs,dataset=valid_dataset)
+
+                _,train_acc = lorahub_inference(example_inputs, model, tokenizer, batch_size, example_outputs,dataset=dataset)
             if step % 1 == 0:
-                print(f"Step {step}, train loss {avg_train_loss}, valid loss {avg_valid_loss}")
+                print(f"Step {step}, train loss {avg_train_loss}, train acc {train_acc}, valid loss {avg_valid_loss}, valid acc {valid_acc}")
             if early_stopping:
                 if avg_valid_loss < best_loss:
                     best_loss = avg_valid_loss

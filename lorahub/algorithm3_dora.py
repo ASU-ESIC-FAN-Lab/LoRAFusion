@@ -122,50 +122,6 @@ def load_dataset(example_inputs, example_outputs, tokenizer):
     return processed_datasets
 
 
-def default_get_loss(example_dataset, model, batch_size):
-    """
-    Get the loss of the model on the example dataset.
-    If compute_gradients is True, computes the loss with gradients (for training).
-    Otherwise, computes the loss without gradients (for evaluation).
-    """
-    data_batch_size = len(example_dataset) if batch_size is None else min(len(example_dataset), batch_size)
-    
-    # Create a DataLoader to batch the example dataset
-    train_dataloader = DataLoader(
-        example_dataset,
-        collate_fn=default_data_collator,
-        batch_size=data_batch_size,
-        pin_memory=True,  # If True, the data loader will copy tensors into CUDA pinned memory before returning them
-    )
-    
-    train_loss = 0
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    # model.config.use_cache = False 
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
-    for _, batch in enumerate(train_dataloader):
-        input("before train loader Press Enter to continue...")
-        batch = {k: v.to(device) for k, v in batch.items()}  # Move batch to the appropriate device
-        print(f"Memory allocated for batch: {torch.cuda.memory_allocated(device)} bytes")
-        print(f"Memory reserved: {torch.cuda.memory_reserved(device)} bytes")
-        # optimizer.zero_grad()  # Clear gradients before the forward pass
-        # Compute loss with gradients (training)
-        outputs = model(**batch)  # Forward pass through the model
-        print(f"Memory allocated after output: {torch.cuda.memory_allocated(device)} bytes")
-
-        loss = outputs.loss
-        loss.backward()  # Backpropagate the loss
-        print(f"Memory allocated after backward: {torch.cuda.memory_allocated(device)} bytes")
-        # optimizer.step()  # Update the model's parameters
-        # print(f"Memory allocated after step: {torch.cuda.memory_allocated(device)} bytes")
-        train_loss += loss  # Accumulate the loss
-        del batch, outputs, loss  # Clear memory
-        model.zero_grad() 
-        torch.cuda.empty_cache()  # Clear memory
-        
-        gc.collect()  # Garbage collection
-        print(f"Memory allocated for batch: {torch.cuda.memory_allocated(device)} bytes")
-    
-    return train_loss / len(example_dataset["input"])  # Keep as tensor for backpropagation
 
 def default_l1_regularization(weights):
     """
@@ -277,7 +233,7 @@ def lorahub_learning(lora_module_list: List[str],
                      max_inference_step: int,
                      model_name_or_path=None,
                      batch_size=None,
-                     get_loss=default_get_loss, 
+                     get_loss=None, 
                      get_regular=default_l1_regularization,
                      seed=42,
                      early_stopping=True,
