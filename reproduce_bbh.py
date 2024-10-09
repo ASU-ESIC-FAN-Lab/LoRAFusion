@@ -65,7 +65,7 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
     result={}
     # result={'lorahub avg acc':{},'lorahub max acc':{}}
     # 5 seeds used in our experiments
-    for sub_dir in sub_dirs:
+    for sub_dir in sub_dirs[14:]:
         # try:
             # if "boolean_expression" in sub_dir:
             #     continue
@@ -102,7 +102,7 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
                 for lora_num in range(20,21,1):
                     for lr_n in range(20,21,5):
                         lr=lr_n/1000
-                        lr=0.00003
+                        lr=0.0001
                         print(lr)
                         task_perf_list = []
                         if (step,lora_num,lr_n) not in result.keys():
