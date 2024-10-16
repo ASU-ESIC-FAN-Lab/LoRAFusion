@@ -1,13 +1,14 @@
 from lorahub.algorithm import lorahub_inference
 import os
 import json
-from lorahub.algorithm_dora import lorahub_learning, lorahub_inference
+from lorahub.algorithm3_dora_prune import lorahub_learning, lorahub_inference
 from lorahub.constant import LORA_MODULE_NAMES
 import random
 from random import shuffle
 import sys
 import pandas as pd
 import torch
+import wandb
 def evaluate_flan_results_zero_shot(folder, flan_model_name):
     sub_dirs = os.listdir(folder)
     result={}
@@ -65,7 +66,7 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
     result={}
     # result={'lorahub avg acc':{},'lorahub max acc':{}}
     # 5 seeds used in our experiments
-    for sub_dir in sub_dirs[14:]:
+    for sub_dir in sub_dirs:
         # try:
             # if "boolean_expression" in sub_dir:
             #     continue
@@ -87,7 +88,7 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
             example_num=100
             example_inputs, examples_outputs = example_inputs[:example_num], examples_outputs[:example_num]
             # separate the training and validation dataset
-            train_inputs, train_outputs, valid_inputs, valid_outputs = separate_valid_dataset(example_inputs, examples_outputs, valid_ratio=0.15)
+            train_inputs, train_outputs, valid_inputs, valid_outputs = separate_valid_dataset(example_inputs, examples_outputs, valid_ratio=0.05)
 
             # load the zero-shot examples for evaluation
             test_file_path = os.path.join(folder, sub_dir, "zero_shot.jsonl")
@@ -98,18 +99,21 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
                 task_outputs.append(example["completion"])
 
             step_result={}
-            for step in range(50,51,1):
+            for step in range(20,21,1):
                 for lora_num in range(20,21,1):
                     for lr_n in range(20,21,5):
+                        
                         lr=lr_n/1000
-                        lr=0.0001
+                        lr=0.01
+                        
                         print(lr)
                         task_perf_list = []
                         if (step,lora_num,lr_n) not in result.keys():
                             result[(step,lora_num,lr_n)]={'lorahub avg acc':{},'lorahub max acc':{}}
 
                         for seed in range(1,4):
-                            
+                            wandb_config={"epochs":step,"lr":lr_n ,"task_name":sub_dir,"seed":seed}
+                            wandb.init(project="dorahub",name=f"prune_test{sub_dir}",config=wandb_config)
                             # lr=0.001
                             random.seed(seed)
                             print("Evaluating on task (lorahub): ", sub_dir, "with seed:", seed)
@@ -126,7 +130,9 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
                                                                                 max_inference_step=step,
                                                                                 batch_size=5,lr=lr,
                                                                                 valid_inputs=valid_inputs,
-                                                                                valid_outputs=valid_outputs)
+                                                                                valid_outputs=valid_outputs,
+                                                                                log_experiment=True,
+                                                                                early_stopping=False)
 
                             # print("module_weights:", module_weights)
 
@@ -144,6 +150,8 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
                             torch.cuda.reset_peak_memory_stats()
                             # input("press any key to continue")
                             print(f"task{sub_dir},seed{seed},step{step},lora_num{lora_num},acc:{task_acc}")
+                            wandb.log({"task_acc":task_acc})
+                            wandb.finish()
                             task_perf_list.append(task_acc)
                         # break
                     avg_perf, max_perf = sum(task_perf_list) / len(task_perf_list), max(task_perf_list)
@@ -163,6 +171,7 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
     result_pd=pd.DataFrame(result)
     return result,result_pd
 if __name__ == "__main__":
+    # wandb.init(project="dorahub",name="prune_test")
     result_folder = "results"
     # zero_result,zero_result_df=evaluate_flan_results_zero_shot("data_bbh", "google/flan-t5-large")
     # zero_result_df.to_csv(os.path.join(result_folder, "zero_result.csv"))
@@ -171,4 +180,5 @@ if __name__ == "__main__":
     # few_result_df.to_csv(os.path.join(result_folder, "few_result.csv"))
     # five shot for lorahub models
     lorahub_result,lorahub_result_df=evaluate_lorahub_results_few_shot("data_bbh", "google/flan-t5-large")
+    # lorahub_result,lorahub_result_df=evaluate_lorahub_results_few_shot("data_bbh", "google/flan-t5-small")
     lorahub_result_df.to_csv(os.path.join(result_folder, "lorahub_result_dora.csv"))

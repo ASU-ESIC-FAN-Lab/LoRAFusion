@@ -37,11 +37,11 @@ def load_base_model_and_lora_modules(lora_module_list: List[str], model_name_or_
     #dora config
     dora_config = PeftConfig.from_pretrained(default_peft_model_id)
     dora_config.use_dora = True
-    dora_config.lora_dropout = 0.2
+    dora_config.lora_dropout = 0.1
     # find the base model
     if model_name_or_path is None:
         model_name_or_path = PeftConfig.from_pretrained(default_peft_model_id).base_model_name_or_path
-        
+    print(f"Loading base model {model_name_or_path}")
     base_model = AutoModelForSeq2SeqLM.from_pretrained(model_name_or_path)
     
     # load tokenizer
@@ -334,7 +334,7 @@ def lorahub_learning(lora_module_list: List[str],
     # set the final weights
     # set_peft_model_state_dict(model, final_lora)
     model = model.merge_and_unload()
-    del optimizer,train_dataloader,dataset
+    del train_dataloader,dataset
     # del  optimizer, final_state_dict,final_lora,train_dataloader,dataset
     # del key_params_lookup, model_param_name_lookup,optimized_weights,
     # print("test")

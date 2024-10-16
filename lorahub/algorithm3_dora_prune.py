@@ -6,11 +6,11 @@ from transformers import default_data_collator
 from transformers import AutoTokenizer
 from tqdm import tqdm
 import pandas as pd
-import numpy
+import numpy as np
 import random
 import nevergrad as ng
 from peft.utils.save_and_load import set_peft_model_state_dict, get_peft_model_state_dict
-from peft import PeftModel, PeftConfig
+from peft import PeftModel, PeftConfig,get_peft_model
 from functools import partial
 from typing import List, Optional, Union
 import copy
@@ -20,6 +20,7 @@ import gc  # Garbage collection
 from torchviz import make_dot
 import os
 import time
+import wandb
 os.environ["PATH"] += os.pathsep + 'C:/Program Files/Graphviz/bin/'
 
 def load_base_model_and_lora_modules(lora_module_list: List[str], model_name_or_path: Optional[str] = None):
@@ -33,19 +34,25 @@ def load_base_model_and_lora_modules(lora_module_list: List[str], model_name_or_
     device = "cuda" if torch.cuda.is_available() else "cpu"
     # load basic model
     default_peft_model_id = lora_module_list[0]
+    #dora config
+    dora_config = PeftConfig.from_pretrained(default_peft_model_id)
+    dora_config.use_dora = True
     # find the base model
     if model_name_or_path is None:
         model_name_or_path = PeftConfig.from_pretrained(default_peft_model_id).base_model_name_or_path
         
     base_model = AutoModelForSeq2SeqLM.from_pretrained(model_name_or_path)
+    
     # load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
     # 0 is the default model
     try:
-        peft_model = PeftModel.from_pretrained(base_model, default_peft_model_id)
+        #create a new base model with dora config
+        dora_base_model = AutoModelForSeq2SeqLM.from_pretrained(model_name_or_path)
+        peft_model = get_peft_model(dora_base_model, dora_config)
     except:
         raise Exception(f'{default_peft_model_id} is unable to load into the model {model_name_or_path}')
-        
+    base_model = base_model.to(device)
     peft_model = peft_model.to(device)
     peft_model.eval()
 
@@ -116,50 +123,6 @@ def load_dataset(example_inputs, example_outputs, tokenizer):
     return processed_datasets
 
 
-def default_get_loss(example_dataset, model, batch_size):
-    """
-    Get the loss of the model on the example dataset.
-    If compute_gradients is True, computes the loss with gradients (for training).
-    Otherwise, computes the loss without gradients (for evaluation).
-    """
-    data_batch_size = len(example_dataset) if batch_size is None else min(len(example_dataset), batch_size)
-    
-    # Create a DataLoader to batch the example dataset
-    train_dataloader = DataLoader(
-        example_dataset,
-        collate_fn=default_data_collator,
-        batch_size=data_batch_size,
-        pin_memory=True,  # If True, the data loader will copy tensors into CUDA pinned memory before returning them
-    )
-    
-    train_loss = 0
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    # model.config.use_cache = False 
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
-    for _, batch in enumerate(train_dataloader):
-        input("before train loader Press Enter to continue...")
-        batch = {k: v.to(device) for k, v in batch.items()}  # Move batch to the appropriate device
-        print(f"Memory allocated for batch: {torch.cuda.memory_allocated(device)} bytes")
-        print(f"Memory reserved: {torch.cuda.memory_reserved(device)} bytes")
-        # optimizer.zero_grad()  # Clear gradients before the forward pass
-        # Compute loss with gradients (training)
-        outputs = model(**batch)  # Forward pass through the model
-        print(f"Memory allocated after output: {torch.cuda.memory_allocated(device)} bytes")
-
-        loss = outputs.loss
-        loss.backward()  # Backpropagate the loss
-        print(f"Memory allocated after backward: {torch.cuda.memory_allocated(device)} bytes")
-        # optimizer.step()  # Update the model's parameters
-        # print(f"Memory allocated after step: {torch.cuda.memory_allocated(device)} bytes")
-        train_loss += loss  # Accumulate the loss
-        del batch, outputs, loss  # Clear memory
-        model.zero_grad() 
-        torch.cuda.empty_cache()  # Clear memory
-        
-        gc.collect()  # Garbage collection
-        print(f"Memory allocated for batch: {torch.cuda.memory_allocated(device)} bytes")
-    
-    return train_loss / len(example_dataset["input"])  # Keep as tensor for backpropagation
 
 def default_l1_regularization(weights):
     """
@@ -187,6 +150,7 @@ def get_final_weights(weights, lora_module_list, cache):
         if i == 0:
             for j,key in enumerate(keys):
                 if 'encoder' in key:
+                    
                     final_state_dict[key] = weights[i][j//4] * lora_state_dict[key]
                 else:
                     final_state_dict[key] = weights[i][j//8+12] * lora_state_dict[key]
@@ -208,7 +172,8 @@ def lorahub_inference(example_inputs: List[str],
                       tokenizer_or_tokenizer_path: Union[AutoTokenizer, str],
                       batch_size: int,
                       # if not provided, we do not report the accuracy
-                      example_outputs: List[str]=None):
+                      example_outputs: List[str]=None,
+                      dataset=None):
     
     def accuracy_score(outputs, ground_truths):
         correct = 0
@@ -226,17 +191,19 @@ def lorahub_inference(example_inputs: List[str],
     else:
         model = model_or_name_path
     
-    # load tokenizer
+        
+        # load tokenizer
     if isinstance(tokenizer_or_tokenizer_path, str):
         tokenizer = AutoTokenizer.from_pretrained(tokenizer_or_tokenizer_path)
     else:
         tokenizer = tokenizer_or_tokenizer_path
             
-    # for name, param in model.named_parameters():
-    #     if "lora" not in name:
-    #         param.requires_grad = False
-    # process dataset
-    dataset = load_dataset(example_inputs, example_outputs, tokenizer)
+        # for name, param in model.named_parameters():
+        #     if "lora" not in name:
+        #         param.requires_grad = False
+        # process dataset
+    if not dataset:
+        dataset = load_dataset(example_inputs, example_outputs, tokenizer)
     # use gpu if available
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = model.to(device)
@@ -270,14 +237,19 @@ def lorahub_learning(lora_module_list: List[str],
                      max_inference_step: int,
                      model_name_or_path=None,
                      batch_size=None,
-                     get_loss=default_get_loss, 
+                     get_loss=None, 
                      get_regular=default_l1_regularization,
                      seed=42,
                      early_stopping=True,
-                     lr=0.01):
+                     lr=0.01,
+                     valid_inputs=None,
+                     valid_outputs=None,
+                     log_experiment=False,
+                     prune=True):
+    print("init dora learning")
     # set seed for reproducibility
     random.seed(seed)
-    numpy.random.seed(seed)
+    np.random.seed(seed)
 
     number_of_loras = len(lora_module_list)
     if number_of_loras == 0:
@@ -295,6 +267,15 @@ def lorahub_learning(lora_module_list: List[str],
         batch_size=data_batch_size,
         pin_memory=True,  # If True, the data loader will copy tensors into CUDA pinned memory before returning them
     )
+    if valid_inputs is not None:
+        valid_dataset = load_dataset(valid_inputs, valid_outputs, tokenizer)    
+        valid_dataloader = DataLoader(
+            valid_dataset,
+            collate_fn=default_data_collator,
+            batch_size=data_batch_size,
+            pin_memory=True,  # If True, the data loader will copy tensors into CUDA pinned memory before returning them
+        )
+
     
     
     # set up the limit of the weights dimension 24 * number_of_loras
@@ -302,27 +283,43 @@ def lorahub_learning(lora_module_list: List[str],
     print("num_blocks:",num_blocks)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     params = torch.empty(number_of_loras, num_blocks, device=device, requires_grad=True)
-    # torch.nn.init.xavier_uniform_(params)
+    torch.nn.init.xavier_uniform_(params)
     optimizer = optim.Adam([params], lr=lr, weight_decay=0.00000) #weight decay
+    magnitude_params = []
     
     final_state_dict = {}
     keys = cache[lora_module_list[0]].keys()
     key_params_lookup = {} #parameter name to the corresponding lora weights for different modules
-    model_param_name_lookup={}#parameter name to correspond parameter in model 
+    model_param_name_lookup={}#parameter name in the model to correspond parameter in model 
     for name, param in model.named_parameters():
-        name_processed = name.replace(".default","")
-        if name_processed in cache[lora_module_list[0]]:
-            model_param_name_lookup[name_processed]=param
+        # print(name)
+        if "lora" in name:
+            name_processed = name.replace(".default","")
+            if name_processed in cache[lora_module_list[0]]:
+                model_param_name_lookup[name_processed]=param
+                param.requires_grad = True
+        if "lora_magnitude_vector" in name:
+            # print(name)
             param.requires_grad = True
+            magnitude_params.append(param)
+    # print(len(magnitude_params))
+    magnitude_optimizer = optim.Adam(magnitude_params, lr=0.005)
+    magnitude_mask = torch.ones(len(magnitude_params), device=device, requires_grad=False)
     # print(len(model_param_name_lookup.keys()))
     # print(model_param_name_lookup.keys())
-
+    # for name, param in model.named_parameters():
+    #     if "lora_A" in name or "lora_B" in name:
+    #         is_all_zero = torch.all(param.data == 0)
+    #         print(f"name: {name}\n 0 grad:{is_all_zero}")
+    # # return
+    # a=input("press to continue")
     def update_lora():
         for i, peft_model_id in enumerate(lora_module_list):
             lora_state_dict = cache[peft_model_id]
             if i == 0:
                 for j,key in enumerate(keys):
                     if 'encoder' in key:
+                        # print(final_state_dict[key].is_cuda)
                         final_state_dict[key] = params[i][j//4] * lora_state_dict[key]
                         key_params_lookup[key] = [(i,j//4,peft_model_id)]
                     
@@ -343,6 +340,7 @@ def lorahub_learning(lora_module_list: List[str],
                         key_params_lookup[key].append((i,j//8+12,peft_model_id))
         for name,param in model_param_name_lookup.items():
             param.data.copy_(final_state_dict[name])
+            # print(param.data)
             param.grad = None
     
         # for name, param in model.named_parameters():
@@ -356,64 +354,114 @@ def lorahub_learning(lora_module_list: List[str],
         #         param.grad = None
     update_lora()
     # print("> Begin to perform gradient optimization ...")
-    patience = 10
+    patience = max_inference_step//3
+    warmup_steps = max_inference_step//5
+    patience_counter = 5
+    prune_step = 10
     best_loss = float("inf")
     best_params = None
-    patience_counter = 0
-    pruning_rate = 0.3
-    pruned_params = []
+    
+
     for step in range(max_inference_step):
         total_loss = 0
-        if step == max_inference_step//2:
-            #pruning
-            print("pruning")
-            for i,paramx in enumerate(params):
-                for j,param in enumerate(paramx): 
-                    if param < 0.0001:
-                        param = 0
-                        pruned_params.append((i,j))
-
+        
         for _, batch in enumerate(train_dataloader):
             # print(f"Memory allocated for batch: {torch.cuda.memory_allocated(device)} bytes")
             optimizer.zero_grad()
+            magnitude_optimizer.zero_grad()
             batch = {k: v.to(device) for k, v in batch.items()}
             outputs = model(**batch)
             loss = outputs.loss/len(batch["input_ids"])
             # print(f"Memory allocated for batch: {torch.cuda.memory_allocated(device)} bytes")
             total_loss += loss.item()
             loss.backward()
+            
             # print(f"Memory allocated for batch: {torch.cuda.memory_allocated(device)} bytes")
             l1reg=default_l1_regularization(params)
             l1reg.backward()
-
+            #apply mask
+            for i,param in enumerate(magnitude_params):
+                param.data *= magnitude_mask[i]
+                #set grad to zero not None
+                if magnitude_mask[i] == 0:
+                    param.grad = torch.zeros_like(param.data)
+                # param.grad = torch.zeros_like(param.data)
             for name, param in model_param_name_lookup.items():
                 for i,j,peft_model_id in key_params_lookup[name]:
-                    
+                    # print(name,param.grad)
                     params.grad[i,j] += (param.grad * cache[peft_model_id][name]).sum()
             
             optimizer.step()
-            if step >= max_inference_step//2:
-                for (i,j) in pruned_params:
-                    params.data[i,j] = 0
+            magnitude_optimizer.step()
             update_lora()
             del batch, outputs, loss  # Clear memory
             # print("update time:",time.time()-starttime)
-        avg_loss = total_loss / len(train_dataloader) + l1reg.item()
-        if step % 10 == 0:
-            print(f"Step {step}, loss {avg_loss}")
-        if early_stopping:
-            if avg_loss < best_loss:
-                best_loss = avg_loss
-                best_params = params.detach().clone()
-                patience_counter = 0
+        avg_train_loss = total_loss / len(train_dataloader) + l1reg.item()
+        #valid loss
+        _, valid_acc = lorahub_inference(valid_inputs, model, tokenizer, batch_size, valid_outputs,dataset=valid_dataset)
+
+        _,train_acc = lorahub_inference(example_inputs, model, tokenizer, batch_size, example_outputs,dataset=dataset)
+            
+        
+        if valid_inputs is not None:
+            
+            with torch.no_grad():
+                total_loss = 0
+                for _, batch in enumerate(valid_dataloader):
+                    batch = {k: v.to(device) for k, v in batch.items()}
+                    outputs = model(**batch)
+                    loss = outputs.loss/len(batch["input_ids"])
+                    total_loss += loss.item()
+                    del batch, outputs, loss
+            avg_valid_loss = total_loss / len(valid_dataloader)
+            if step % 1 == 0:
+                # result
+                print(f"Step {step}, train loss {avg_train_loss}, train acc {train_acc}, valid loss {avg_valid_loss}, valid acc {valid_acc}")
+                if log_experiment:
+                    wandb.log({"train_loss":avg_train_loss,"train_acc":train_acc,"valid_loss":avg_valid_loss,"valid_acc":valid_acc})
+            
+                # print(f"Step {step}, train loss {avg_train_loss}, valid loss {avg_valid_loss}")
+            if early_stopping:
+                if avg_valid_loss < best_loss:
+                    best_loss = avg_valid_loss
+                    # best_params = params.detach().clone()
+                    best_params = params.detach().clone()
+                    patience_counter = 0
+                else:
+                    if step > warmup_steps:
+                        patience_counter += 1
+                    if patience_counter >= patience:
+                        print(f"Early stopping at step {step}")
+                        break
             else:
-                patience_counter += 1
-                if patience_counter >= patience:
-                    print(f"Early stopping at step {step}")
-                    break
+                best_params = params.detach().clone()
         else:
-            best_params = params.detach().clone()
-    # print(pruned_params)
+            print(f"Step {step}, train loss {avg_train_loss}")
+        
+        #calculate mask based on the asb value of the magnitude vector, prune the 15% smallest value
+        if prune:
+            with torch.no_grad():
+                prune_rate = 0.15
+                if step == prune_step:
+                    print("prune")
+                    magnitude = torch.cat([param.data for param in magnitude_params])
+                    magnitude_abs = torch.abs(magnitude)
+                    #save the magnitude distribution
+                    magnitude_distribution = magnitude_abs.cpu().numpy()
+                    # np.save("magnitude_distribution.npy",magnitude_distribution)
+                    #sort
+                    sorted_magnitude, sorted_indices = torch.sort(magnitude_abs)
+                    threshold = sorted_magnitude[int(len(sorted_magnitude)*prune_rate)]
+                    magnitude_mask = (magnitude_abs >= threshold).float()
+                #apply mask
+                for i,param in enumerate(magnitude_params):
+                    param.data *= magnitude_mask[i]
+
+
+        
+
+        
+    
     optimized_weights = best_params.cpu().numpy()
     #save value to txt
     # with open('recommendation.txt', 'w') as f:
@@ -423,7 +471,7 @@ def lorahub_learning(lora_module_list: List[str],
     # set the final weights
     set_peft_model_state_dict(model, final_lora)
     model = model.merge_and_unload()
-    del params, optimizer, final_state_dict,final_lora,train_dataloader,dataset
+    del params, optimizer,magnitude_optimizer, final_state_dict,final_lora,train_dataloader,dataset
     del key_params_lookup, model_param_name_lookup,optimized_weights,
     # print("test")
     return None, model, tokenizer

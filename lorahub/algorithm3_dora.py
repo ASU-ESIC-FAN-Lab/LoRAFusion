@@ -239,7 +239,8 @@ def lorahub_learning(lora_module_list: List[str],
                      early_stopping=True,
                      lr=0.01,
                      valid_inputs=None,
-                     valid_outputs=None):
+                     valid_outputs=None,
+                     log_experiment=False):
     print("init dora learning")
     # set seed for reproducibility
     random.seed(seed)
@@ -297,7 +298,8 @@ def lorahub_learning(lora_module_list: List[str],
             param.requires_grad = True
             magnitude_params.append(param)
     # print(len(magnitude_params))
-    magnitude_optimizer = optim.Adam(magnitude_params, lr=0.005, weight_decay=0.00001)
+    magnitude_optimizer = optim.Adam(magnitude_params, lr=0.005)
+    magnitude_mask = torch.ones(len(magnitude_params), device=device, requires_grad=False)
     # print(len(model_param_name_lookup.keys()))
     # print(model_param_name_lookup.keys())
     # for name, param in model.named_parameters():
@@ -409,7 +411,7 @@ def lorahub_learning(lora_module_list: List[str],
                 best_params = params.detach().clone()
         else:
             print(f"Step {step}, train loss {avg_train_loss}")
-        
+   
     
     optimized_weights = best_params.cpu().numpy()
     #save value to txt
