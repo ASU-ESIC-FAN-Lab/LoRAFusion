@@ -66,7 +66,7 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
     result={}
     # result={'lorahub avg acc':{},'lorahub max acc':{}}
     # 5 seeds used in our experiments
-    for sub_dir in sub_dirs:
+    for sub_dir in sub_dirs[1:]:
         # try:
             # if "boolean_expression" in sub_dir:
             #     continue

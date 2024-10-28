@@ -264,7 +264,7 @@ def lorahub_learning(lora_module_list: List[str],
         print("> Please provide only one quantization method.")
         return None, None
     if load_in_4bit:
-        quantization_config = BitsAndBytesConfig(load_in_4bit=True)
+        quantization_config = BitsAndBytesConfig(load_in_4bit=True,bnb_4bit_compute_dtype=torch.bfloat16)
     elif load_in_8bit:
         quantization_config = BitsAndBytesConfig(load_in_8bit=True)
     else:
@@ -321,6 +321,27 @@ def lorahub_learning(lora_module_list: List[str],
     magnitude_optimizer = optim.Adam(magnitude_params, lr=0.005)
     magnitude_mask = torch.ones(len(magnitude_params), device=device, requires_grad=False)
 
+    def check_nan_in_gradients(model):
+        for name, param in model.named_parameters():
+            if param.grad is not None:  # Check if the parameter has a gradient
+                if torch.isnan(param.grad).any():
+                    #set to 0
+                    param.grad = torch.zeros_like(param.grad)
+                    # print(f"NaN detected in gradient of parameter: {name}")
+                    # return True
+                if torch.isinf(param.grad).any():
+                    #set to 0
+                    param.grad = torch.zeros_like(param.grad)
+                    # print(f"Infinity detected in gradient of parameter: {name}")
+                    # return True
+        return False
+    def check_nan_in_parameters(model):
+        for name, param in model.named_parameters():
+            if torch.isnan(param).any():
+                print(f"NaN detected in parameter: {name}")
+                return True
+        print("No NaNs detected in parameters.")
+        return False
     def update_lora():
         for i, peft_model_id in enumerate(lora_module_list):
             lora_state_dict = cache[peft_model_id]
@@ -379,7 +400,9 @@ def lorahub_learning(lora_module_list: List[str],
             magnitude_optimizer.zero_grad()
             batch = {k: v.to(device) for k, v in batch.items()}
             outputs = model(**batch)
+            # print(outputs)
             loss = outputs.loss/len(batch["input_ids"])
+            # print(loss)
             # print(f"Memory allocated for batch: {torch.cuda.memory_allocated(device)} bytes")
             total_loss += loss.item()
             loss.backward()
@@ -387,13 +410,15 @@ def lorahub_learning(lora_module_list: List[str],
             # print(f"Memory allocated for batch: {torch.cuda.memory_allocated(device)} bytes")
             l1reg=default_l1_regularization(params)
             l1reg.backward()
+            gradient=check_nan_in_gradients(model)
             #apply mask
-            for i,param in enumerate(magnitude_params):
-                param.data *= magnitude_mask[i]
-                #set grad to zero not None
-                if magnitude_mask[i] == 0:
-                    param.grad = torch.zeros_like(param.data)
-                # param.grad = torch.zeros_like(param.data)
+            if prune:
+                for i,param in enumerate(magnitude_params):
+                    param.data *= magnitude_mask[i]
+                    #set grad to zero not None
+                    if magnitude_mask[i] == 0:
+                        param.grad = torch.zeros_like(param.data)
+                    # param.grad = torch.zeros_like(param.data)
             for name, param in model_param_name_lookup.items():
                 for i,j,peft_model_id in key_params_lookup[name]:
                     # print(name,param.grad)
@@ -401,6 +426,7 @@ def lorahub_learning(lora_module_list: List[str],
             
             optimizer.step()
             magnitude_optimizer.step()
+            # nan=check_nan_in_parameters(model)
             update_lora()
             del batch, outputs, loss  # Clear memory
             # print("update time:",time.time()-starttime)
