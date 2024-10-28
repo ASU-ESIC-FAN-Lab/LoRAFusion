@@ -1,7 +1,7 @@
 from lorahub.algorithm import lorahub_inference
 import os
 import json
-from lorahub.algorithm3_dora_prune import lorahub_learning, lorahub_inference
+from lorahub.algorithm3_dora_prune_quant import lorahub_learning, lorahub_inference
 from lorahub.constant import LORA_MODULE_NAMES
 import random
 from random import shuffle
@@ -60,7 +60,7 @@ def separate_valid_dataset(example_inputs, examples_outputs, valid_ratio=0.1):
     valid_inputs, valid_outputs = example_inputs[:valid_num], examples_outputs[:valid_num]
     train_inputs, train_outputs = example_inputs[valid_num:], examples_outputs[valid_num:]
     return train_inputs, train_outputs, valid_inputs, valid_outputs
-def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results"):
+def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results",log_experiment=False):
     sub_dirs = os.listdir(folder)
     sub_dirs= sorted(sub_dirs)
     result={}
@@ -112,8 +112,9 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
                             result[(step,lora_num,lr_n)]={'lorahub avg acc':{},'lorahub max acc':{}}
 
                         for seed in range(1,4):
-                            wandb_config={"epochs":step,"lr":lr_n ,"task_name":sub_dir,"seed":seed}
-                            wandb.init(project="dorahub",name=f"prune_test{sub_dir}",config=wandb_config)
+                            if log_experiment:
+                                wandb_config={"epochs":step,"lr":lr_n ,"task_name":sub_dir,"seed":seed}
+                                wandb.init(project="dorahub",name=f"prune_test{sub_dir}",config=wandb_config)
                             # lr=0.001
                             random.seed(seed)
                             print("Evaluating on task (lorahub): ", sub_dir, "with seed:", seed)
@@ -131,8 +132,10 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
                                                                                 batch_size=5,lr=lr,
                                                                                 valid_inputs=valid_inputs,
                                                                                 valid_outputs=valid_outputs,
-                                                                                log_experiment=True,
-                                                                                early_stopping=False)
+                                                                                log_experiment=log_experiment,
+                                                                                prune=False,
+                                                                                early_stopping=False,
+                                                                                load_in_4bit=True)
 
                             # print("module_weights:", module_weights)
 
@@ -150,8 +153,9 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
                             torch.cuda.reset_peak_memory_stats()
                             # input("press any key to continue")
                             print(f"task{sub_dir},seed{seed},step{step},lora_num{lora_num},acc:{task_acc}")
-                            wandb.log({"task_acc":task_acc})
-                            wandb.finish()
+                            if log_experiment:
+                                wandb.log({"task_acc":task_acc})
+                                wandb.finish()
                             task_perf_list.append(task_acc)
                         # break
                     avg_perf, max_perf = sum(task_perf_list) / len(task_perf_list), max(task_perf_list)
@@ -179,6 +183,6 @@ if __name__ == "__main__":
     # few_result,few_result_df=evaluate_flan_results_few_shot("data_bbh", "google/flan-t5-large")
     # few_result_df.to_csv(os.path.join(result_folder, "few_result.csv"))
     # five shot for lorahub models
-    lorahub_result,lorahub_result_df=evaluate_lorahub_results_few_shot("data_bbh", "google/flan-t5-large")
+    lorahub_result,lorahub_result_df=evaluate_lorahub_results_few_shot("data_bbh", "google/flan-t5-large",log_experiment=False)
     # lorahub_result,lorahub_result_df=evaluate_lorahub_results_few_shot("data_bbh", "google/flan-t5-small")
     lorahub_result_df.to_csv(os.path.join(result_folder, "lorahub_result_dora.csv"))
