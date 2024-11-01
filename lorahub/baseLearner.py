@@ -43,7 +43,7 @@ class myBaseLearner:
 
         self.model = None
         self.model=self._load_model()
-
+        print("model loaded")
         self.train_dataset = None
         self.valid_dataset = None
         self.train_dataloader = None
@@ -63,18 +63,19 @@ class myBaseLearner:
             raise ValueError("model_name_or_path is required")
 
     def _load_model(self,train_base=True):
-        base_model = AutoModelForSeq2SeqLM.from_pretrained(self.base_model_name,quantization_config=self.quantization_config,device_map="auto")
+        base_model = AutoModelForSeq2SeqLM.from_pretrained(self.base_model_name,quantization_config=self.quantization_config,device_map='auto')
+        # if self.quantization_config is not None:
+        #     base_model.to(self.device)
         self.tokenizer = AutoTokenizer.from_pretrained(self.base_model_name)
         if train_base:
             base_model.train()
         # self.model=base_model
         return base_model
-    
-    def _preprocess_function(self,examples):
+    @staticmethod
+    def _preprocess_function(examples,tokenizer):
         """
         standard preprocess function for dataset
         """
-        tokenizer=self.tokenizer
         inputs = examples["input"]
         targets = examples["output"]
         model_inputs = tokenizer(
@@ -99,13 +100,13 @@ class myBaseLearner:
     def load_dataset(self,example_inputs, example_outputs):
         # add empty string if example_outputs is None
         if example_outputs is None:
-            example_outputs = [""] * len(example_inputs)
+            return None
         df = [
             {"input": example_inputs[i], "output": example_outputs[i]}
             for i in range(len(example_inputs))
         ]
         dataset = Dataset.from_pandas(pd.DataFrame(df))
-        preprocess_func_with_tokenizer = partial(self._preprocess_function)
+        preprocess_func_with_tokenizer = partial(self._preprocess_function,tokenizer=self.tokenizer)
         processed_datasets = dataset.map(
             preprocess_func_with_tokenizer,
             batched=True,
@@ -114,6 +115,8 @@ class myBaseLearner:
         )
         return processed_datasets
     def load_data_loader(self,dataset):
+        if dataset is None:
+            return None
         return DataLoader(
             dataset,
             batch_size=self.batch_size,
@@ -134,7 +137,6 @@ class myBaseLearner:
                       # if not provided, we do not report the accuracy
                       example_outputs: List[str]=None,
                       dataset=None):
-        print("test")
         def accuracy_score(outputs, ground_truths):
             correct = 0
             total = 0
@@ -174,6 +176,7 @@ class myBaseLearner:
         return example_predictions, task_perf
     
     def train(self,validation=True):
+        print("start training")
         validation = validation and self.valid_dataloader is not None
         random.seed(self.seed)
         np.random.seed(self.seed)
@@ -183,16 +186,18 @@ class myBaseLearner:
             total_loss = 0
 
             for _,batch in enumerate(self.train_dataloader):
-                 # print(f"Memory allocated for batch: {torch.cuda.memory_allocated(device)} bytes")
+                # print(f"Memory allocated for batch: {torch.cuda.memory_allocated(self.device)} bytes")
                 optimizer.zero_grad()
                 batch = {k: v.to(self.device) for k, v in batch.items()}
                 outputs = self.model(**batch)
                 loss = outputs.loss/len(batch["input_ids"])
-                # print(f"Memory allocated for batch: {torch.cuda.memory_allocated(device)} bytes")
+                # print(f"Memory allocated for batch: {torch.cuda.memory_allocated(self.device)} bytes")
+                # input("press any key to continue")
                 total_loss += loss.item()
                 loss.backward()
                 optimizer.step()
                 del batch, outputs, loss  # Clear memory
+                
                 # print("update time:",time.time()-starttime)
             avg_train_loss = total_loss / len(self.train_dataloader)
 
