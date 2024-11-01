@@ -11,7 +11,21 @@ from functools import partial
 from typing import List, Optional, Union
 import torch.optim as optim
 import wandb
-
+import bitsandbytes as bnb
+def check_nan_in_gradients(model):
+    for name, param in model.named_parameters():
+        if param.grad is not None:  # Check if the parameter has a gradient
+            if torch.isnan(param.grad).any():
+                #set to 0
+                param.grad = torch.zeros_like(param.grad)
+                print(f"NaN detected in gradient of parameter: {name}")
+                # return True
+            if torch.isinf(param.grad).any():
+                #set to 0
+                param.grad = torch.zeros_like(param.grad)
+                print(f"Infinity detected in gradient of parameter: {name}")
+                # return True
+    return False
 class myBaseLearner:
     def __init__(self, model_name_or_path="google/flan-t5-large", 
                     batch_size=5,
@@ -174,13 +188,19 @@ class myBaseLearner:
             task_perf = None
         
         return example_predictions, task_perf
+    def save_model(self,save_path):
+        self.model.save_pretrained(save_path)
     
     def train(self,validation=True):
         print("start training")
         validation = validation and self.valid_dataloader is not None
         random.seed(self.seed)
         np.random.seed(self.seed)
-        optimizer = optim.Adam(filter(lambda p: p.requires_grad, self.model.parameters()), lr=self.lr,weight_decay=0.00001)
+        # optimizer = optim.Adam(filter(lambda p: p.requires_grad, self.model.parameters()), lr=self.lr,weight_decay=0.00001)
+        # optimizer = bnb.optim.Adam8bit(filter(lambda p: p.requires_grad, self.model.parameters()), lr=self.lr
+        #                             , betas=(0.9, 0.995), optim_bits=32, percentile_clipping=5)
+        optimizer = bnb.optim.Adam(filter(lambda p: p.requires_grad, self.model.parameters()), 
+                                   lr=0.0001, betas=(0.9, 0.995), optim_bits=32, percentile_clipping=15,min_8bit_size=32768)
 
         for step in range(self.max_step):
             total_loss = 0
@@ -195,6 +215,7 @@ class myBaseLearner:
                 # input("press any key to continue")
                 total_loss += loss.item()
                 loss.backward()
+                check_nan_in_gradients(self.model)
                 optimizer.step()
                 del batch, outputs, loss  # Clear memory
                 
