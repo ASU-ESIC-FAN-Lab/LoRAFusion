@@ -272,6 +272,8 @@ def lorahub_learning(lora_module_list: List[str],
 
     # load model
     model, tokenizer, cache = load_base_model_and_lora_modules(lora_module_list, model_name_or_path,quantization_config=quantization_config)
+    # for name,param in model.named_parameters():
+    #     print(name,param.dtype)
 
 
     dataset = load_dataset(example_inputs, example_outputs, tokenizer) 
@@ -318,6 +320,8 @@ def lorahub_learning(lora_module_list: List[str],
             param.requires_grad = True
             magnitude_params.append(param)
     # print(len(magnitude_params))
+    #create a empty dummy tensor for each parameter
+    magnitude_params2 = [torch.ones(len(magnitude_params), device=device, requires_grad=True)]
     magnitude_optimizer = optim.Adam(magnitude_params, lr=0.005)
     magnitude_mask = torch.ones(len(magnitude_params), device=device, requires_grad=False)
 
@@ -389,8 +393,7 @@ def lorahub_learning(lora_module_list: List[str],
     prune_step = 10
     best_loss = float("inf")
     best_params = None
-    
-
+    # check_nan_in_parameters(model)
     for step in range(max_inference_step):
         total_loss = 0
         
@@ -410,6 +413,16 @@ def lorahub_learning(lora_module_list: List[str],
             # print(f"Memory allocated for batch: {torch.cuda.memory_allocated(device)} bytes")
             l1reg=default_l1_regularization(params)
             l1reg.backward()
+
+            # for name, param in model.named_parameters():
+            #     if name == 'base_model.model.encoder.block.0.layer.0.SelfAttention.q.lora_A.default.weight':
+            #         print(param.data)
+            #     if param.grad is not None:  # Check if the parameter has a gradient
+            #         #print min and max of the gradient
+            #         # print(name,param.data.max())
+            #         pass
+            # # print(magnitude_params[0].data)
+            
             gradient=check_nan_in_gradients(model)
             #apply mask
             if prune:
@@ -423,7 +436,8 @@ def lorahub_learning(lora_module_list: List[str],
                 for i,j,peft_model_id in key_params_lookup[name]:
                     # print(name,param.grad)
                     params.grad[i,j] += (param.grad * cache[peft_model_id][name]).sum()
-            
+            # torch.nn.utils.clip_grad_norm_(params, 1.0) 
+            # torch.nn.utils.clip_grad_norm_(magnitude_params, 1.0)
             optimizer.step()
             magnitude_optimizer.step()
             # nan=check_nan_in_parameters(model)
@@ -504,7 +518,12 @@ def lorahub_learning(lora_module_list: List[str],
     final_lora = get_final_weights(optimized_weights, lora_module_list, cache)
     # set the final weights
     set_peft_model_state_dict(model, final_lora)
+    # for name,param in model.named_parameters():
+    #     print(name,param.dtype)
     model = model.merge_and_unload()
+    # for name,param in model.named_parameters():
+    #     print(name,param.dtype)
+    # exit()
     del params, optimizer,magnitude_optimizer, final_state_dict,final_lora,train_dataloader,dataset
     del key_params_lookup, model_param_name_lookup,optimized_weights,
     # print("test")
