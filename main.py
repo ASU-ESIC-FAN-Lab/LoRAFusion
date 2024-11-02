@@ -98,8 +98,8 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
                 example = json.loads(line)
                 task_inputs.append(example["context"])
                 task_outputs.append(example["completion"])
-            all_inputs=example_inputs+task_inputs
-            all_outputs=examples_outputs+task_outputs
+            all_inputs=example_inputs+valid_inputs+train_inputs+tuple(task_inputs)
+            all_outputs=examples_outputs+valid_outputs+train_outputs+tuple(task_outputs)
             step_result={}
             for step in range(20,21,1):
                 for lora_num in range(2,3,1):
@@ -135,7 +135,7 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
                                                     log_experiment=log_experiment,
                                                     prune=False,
                                                     early_stopping=False,
-                                                    load_in_4bit=True)
+                                                    load_in_4bit=False)
                             # model.train()
                             # _, task_acc=model.inference(example_inputs=task_inputs, example_outputs=task_outputs)
                             _, task_acc=model.inference(example_inputs=all_inputs, example_outputs=all_outputs)
