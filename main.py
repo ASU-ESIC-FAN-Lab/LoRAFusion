@@ -68,7 +68,7 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
     result={}
     # result={'lorahub avg acc':{},'lorahub max acc':{}}
     # 5 seeds used in our experiments
-    for sub_dir in sub_dirs[4:5]:
+    for sub_dir in sub_dirs:
         # try:
             # if "boolean_expression" in sub_dir:
             #     continue
@@ -88,9 +88,9 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
             example_inputs, examples_outputs = zip(*shuffled_set)
             # take the first 5 examples
             example_num=100
-            example_inputs, examples_outputs = example_inputs[:example_num], examples_outputs[:example_num]
+            # example_inputs, examples_outputs = example_inputs[:example_num], examples_outputs[:example_num]
             # separate the training and validation dataset
-            train_inputs, train_outputs, valid_inputs, valid_outputs = separate_valid_dataset(example_inputs, examples_outputs, valid_ratio=0.05)
+            train_inputs, train_outputs, valid_inputs, valid_outputs = separate_valid_dataset(example_inputs[:example_num], examples_outputs[:example_num], valid_ratio=0.05)
             # load the zero-shot examples for evaluation
             test_file_path = os.path.join(folder, sub_dir, "zero_shot.jsonl")
             task_inputs, task_outputs = [], []
@@ -98,8 +98,9 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
                 example = json.loads(line)
                 task_inputs.append(example["context"])
                 task_outputs.append(example["completion"])
-            all_inputs=example_inputs+valid_inputs+train_inputs+tuple(task_inputs)
-            all_outputs=examples_outputs+valid_outputs+train_outputs+tuple(task_outputs)
+            all_inputs= example_inputs+tuple(task_inputs)
+            all_outputs=examples_outputs+tuple(task_outputs)
+            # print(len(all_inputs))
             step_result={}
             for step in range(20,21,1):
                 for lora_num in range(2,3,1):
