@@ -91,7 +91,8 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
             example_inputs, examples_outputs = example_inputs[:example_num], examples_outputs[:example_num]
             # separate the training and validation dataset
             train_inputs, train_outputs, valid_inputs, valid_outputs = separate_valid_dataset(example_inputs, examples_outputs, valid_ratio=0.05)
-
+            all_inputs=example_inputs+valid_inputs+train_inputs
+            all_outputs=examples_outputs+valid_outputs+train_outputs
             # load the zero-shot examples for evaluation
             test_file_path = os.path.join(folder, sub_dir, "zero_shot.jsonl")
             task_inputs, task_outputs = [], []
@@ -135,9 +136,9 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
                                                     prune=False,
                                                     early_stopping=False,
                                                     load_in_4bit=True)
-                            class_name=model.__class__.__name__
                             model.train()
                             _, task_acc=model.inference(example_inputs=task_inputs, example_outputs=task_outputs)
+                            class_name=model.__class__.__name__
                             del model
 
                             torch.cuda.empty_cache()

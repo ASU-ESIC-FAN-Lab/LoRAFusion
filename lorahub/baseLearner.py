@@ -43,6 +43,9 @@ class myBaseLearner:
                     log_experiment=False):
         self.lr=lr
         self.seed=seed
+        random.seed(self.seed)
+        np.random.seed(self.seed)
+        
         self.max_step=max_step
         self.batch_size = batch_size
         self.base_model_name = model_name_or_path
@@ -51,13 +54,14 @@ class myBaseLearner:
         self.tokenizer = None
         self.quantization_config = None
         if load_in_4bit:
+            print("loading in 4bit")
             self.quantization_config= BitsAndBytesConfig(load_in_4bit=True,bnb_4bit_compute_dtype=torch.bfloat16)
         elif load_in_8bit:
+            print("loading in 8bit")
             self.quantization_config= BitsAndBytesConfig(load_in_8bit=True)
 
         self.model = None
         self.model=self._load_model()
-        print("model loaded")
         self.train_dataset = None
         self.valid_dataset = None
         self.train_dataloader = None
@@ -192,15 +196,16 @@ class myBaseLearner:
         self.model.save_pretrained(save_path)
     
     def train(self,validation=True):
+        if self.train_dataloader is None:
+            raise ValueError("train_dataloader is required")
         print("start training")
         validation = validation and self.valid_dataloader is not None
-        random.seed(self.seed)
-        np.random.seed(self.seed)
-        # optimizer = optim.Adam(filter(lambda p: p.requires_grad, self.model.parameters()), lr=self.lr,weight_decay=0.00001)
+        
+        optimizer = optim.Adam(filter(lambda p: p.requires_grad, self.model.parameters()), lr=self.lr,weight_decay=0.00001)
         # optimizer = bnb.optim.Adam8bit(filter(lambda p: p.requires_grad, self.model.parameters()), lr=self.lr
         #                             , betas=(0.9, 0.995), optim_bits=32, percentile_clipping=5)
-        optimizer = bnb.optim.Adam(filter(lambda p: p.requires_grad, self.model.parameters()), 
-                                   lr=0.0001, betas=(0.9, 0.995), optim_bits=32, percentile_clipping=15,min_8bit_size=32768)
+        # optimizer = bnb.optim.Adam(filter(lambda p: p.requires_grad, self.model.parameters()), 
+        #                            lr=0.0001, betas=(0.9, 0.995), optim_bits=32, percentile_clipping=15,min_8bit_size=32768)
 
         for step in range(self.max_step):
             total_loss = 0
