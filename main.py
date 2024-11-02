@@ -4,6 +4,7 @@ import json
 from lorahub.algorithm3_dora_prune_quant import lorahub_learning, lorahub_inference
 from lorahub.baseLearner import myBaseLearner
 from lorahub.loraLearner import loraLeaner
+from lorahub.dorahubtmp import dorahubtmp
 from lorahub.constant import LORA_MODULE_NAMES
 import random
 from random import shuffle
@@ -102,12 +103,11 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
             all_outputs=examples_outputs+tuple(task_outputs)
             # print(len(all_inputs))
             step_result={}
-            for step in range(20,21,1):
-                for lora_num in range(2,3,1):
+            for step in range(1,2,1):
+                for lora_num in range(20,21,1):
                     for lr_n in range(20,21,5):
-                        
                         lr=lr_n/1000
-                        lr=0.0001
+                        lr=0.001
                         
                         print(lr)
                         task_perf_list = []
@@ -126,24 +126,27 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
                             def get_lora_module_list(lora_num=40):
                                 return random.sample(LORA_MODULE_NAMES, lora_num) #what 
                             # get a list of modules to be used in the composition
-                            model = myBaseLearner(train_input=train_inputs,
+                            # print(f"Memory allocated for batch: {torch.cuda.memory_allocated('cuda')} bytes")
+                            model = loraLeaner(train_input=train_inputs,
                                                     train_output=train_outputs,
                                                     max_step=step,
-                                                    batch_size=1,
+                                                    batch_size=10,
                                                     lr=lr,
                                                     valid_input=valid_inputs,
                                                     valid_output=valid_outputs,
                                                     log_experiment=log_experiment,
                                                     prune=False,
                                                     early_stopping=False,
-                                                    load_in_4bit=False)
-                            # model.train()
+                                                    load_in_4bit=True)
+                            # exit()
+                            model.train()
                             # _, task_acc=model.inference(example_inputs=task_inputs, example_outputs=task_outputs)
                             _, task_acc=model.inference(example_inputs=all_inputs, example_outputs=all_outputs)
                             class_name=model.__class__.__name__
                             del model
-
+                            # print(f"Memory allocated for batch: {torch.cuda.memory_allocated('cuda')} bytes")
                             torch.cuda.empty_cache()
+                            # input("press any key to continue")
                             torch.cuda.reset_peak_memory_stats()
                             # input("press any key to continue")
                             print(f"task{sub_dir},seed{seed},step{step},lora_num{lora_num},acc:{task_acc}")
@@ -162,16 +165,10 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
                     step_result[step]=(avg_perf,max_perf)
                 
     result_pd=pd.DataFrame(result)
+    print("end of training---------------------------------")
     return result,result_pd
 if __name__ == "__main__":
-    # wandb.init(project="dorahub",name="prune_test")
     result_folder = "results"
-    # zero_result,zero_result_df=evaluate_flan_results_zero_shot("data_bbh", "google/flan-t5-large")
-    # zero_result_df.to_csv(os.path.join(result_folder, "zero_result.csv"))
-    # # five shot for flan models
-    # few_result,few_result_df=evaluate_flan_results_few_shot("data_bbh", "google/flan-t5-large")
-    # few_result_df.to_csv(os.path.join(result_folder, "few_result.csv"))
-    # five shot for lorahub models
     lorahub_result,lorahub_result_df=evaluate_lorahub_results_few_shot("data_bbh", "google/flan-t5-large",log_experiment=False)
     # lorahub_result,lorahub_result_df=evaluate_lorahub_results_few_shot("data_bbh", "google/flan-t5-small")
     lorahub_result_df.to_csv(os.path.join(result_folder, "lorahub_result_dora.csv"))

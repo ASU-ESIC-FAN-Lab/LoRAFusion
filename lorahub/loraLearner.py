@@ -36,7 +36,8 @@ class loraLeaner(myBaseLearner):
                     early_stopping=False,
                     load_in_4bit=False,
                     load_in_8bit=False,
-                    log_experiment=False):
+                    log_experiment=False,
+                    **kwargs):
         super().__init__(model_name_or_path=model_name_or_path,
                             batch_size=batch_size,
                             seed=seed,
@@ -50,7 +51,8 @@ class loraLeaner(myBaseLearner):
                             early_stopping=early_stopping,
                             load_in_4bit=load_in_4bit,
                             load_in_8bit=load_in_8bit,
-                            log_experiment=log_experiment)
+                            log_experiment=log_experiment,
+                            **kwargs)
     
     def _load_model(self):
         base_model = super()._load_model(train_base=False)

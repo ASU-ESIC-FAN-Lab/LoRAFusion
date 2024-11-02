@@ -12,20 +12,8 @@ from typing import List, Optional, Union
 import torch.optim as optim
 import wandb
 import bitsandbytes as bnb
-def check_nan_in_gradients(model):
-    for name, param in model.named_parameters():
-        if param.grad is not None:  # Check if the parameter has a gradient
-            if torch.isnan(param.grad).any():
-                #set to 0
-                param.grad = torch.zeros_like(param.grad)
-                print(f"NaN detected in gradient of parameter: {name}")
-                # return True
-            if torch.isinf(param.grad).any():
-                #set to 0
-                param.grad = torch.zeros_like(param.grad)
-                print(f"Infinity detected in gradient of parameter: {name}")
-                # return True
-    return False
+from tqdm import tqdm
+
 class myBaseLearner:
     def __init__(self, model_name_or_path="google/flan-t5-large", 
                     batch_size=5,
@@ -40,14 +28,16 @@ class myBaseLearner:
                     early_stopping=False,
                     load_in_4bit=False,
                     load_in_8bit=False,
-                    log_experiment=False):
+                    log_experiment=False,
+                    **kwargs):
         self.lr=lr
         self.seed=seed
         random.seed(self.seed)
         np.random.seed(self.seed)
-        
+
         self.max_step=max_step
         self.batch_size = batch_size
+        self.early_stopping = early_stopping
         self.base_model_name = model_name_or_path
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.log_experiment = log_experiment
@@ -114,7 +104,29 @@ class myBaseLearner:
         labels[labels == tokenizer.pad_token_id] = -100
         model_inputs["labels"] = labels
         return model_inputs
-    
+    @staticmethod
+    def check_nan_in_gradients(model):
+        for name, param in model.named_parameters():
+            if param.grad is not None:  # Check if the parameter has a gradient
+                if torch.isnan(param.grad).any():
+                    #set to 0
+                    param.grad = torch.zeros_like(param.grad)
+                    print(f"NaN detected in gradient of parameter: {name}")
+                    # return True
+                if torch.isinf(param.grad).any():
+                    #set to 0
+                    param.grad = torch.zeros_like(param.grad)
+                    print(f"Infinity detected in gradient of parameter: {name}")
+                    # return True
+        return False
+    @staticmethod
+    def check_nan_in_parameters(model):
+        for name, param in model.named_parameters():
+            if torch.isnan(param).any():
+                print(f"NaN detected in parameter: {name}")
+                return True
+        print("No NaNs detected in parameters.")
+        return False
     def load_dataset(self,example_inputs, example_outputs):
         # add empty string if example_outputs is None
         if example_outputs is None:
@@ -170,10 +182,11 @@ class myBaseLearner:
         # use gpu if available
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        for i in range(0, len(dataset["input"]), self.batch_size):
+        # for i in range(0, len(dataset["input"]), self.batch_size):
+        for i in tqdm(range(0, len(dataset["input"]), self.batch_size)):
             inputs = self.tokenizer(
                 dataset["input"][i : i + self.batch_size],
-                max_length=2048,
+                # max_length=2048,
                 return_tensors="pt",
                 padding=True,
             ).to(device)
@@ -200,12 +213,13 @@ class myBaseLearner:
             raise ValueError("train_dataloader is required")
         print("start training")
         validation = validation and self.valid_dataloader is not None
-        
-        optimizer = optim.Adam(filter(lambda p: p.requires_grad, self.model.parameters()), lr=self.lr,weight_decay=0.00001)
+        if self.quantization_config is not None:
+            optimizer = bnb.optim.Adam(filter(lambda p: p.requires_grad, self.model.parameters()), 
+                                   lr=self.lr, optim_bits=32, percentile_clipping=95)
+        else:
+            optimizer = optim.Adam(filter(lambda p: p.requires_grad, self.model.parameters()), lr=self.lr,weight_decay=0.00001)
         # optimizer = bnb.optim.Adam8bit(filter(lambda p: p.requires_grad, self.model.parameters()), lr=self.lr
         #                             , betas=(0.9, 0.995), optim_bits=32, percentile_clipping=5)
-        # optimizer = bnb.optim.Adam(filter(lambda p: p.requires_grad, self.model.parameters()), 
-        #                            lr=0.0001, betas=(0.9, 0.995), optim_bits=32, percentile_clipping=15,min_8bit_size=32768)
 
         for step in range(self.max_step):
             total_loss = 0
@@ -220,7 +234,7 @@ class myBaseLearner:
                 # input("press any key to continue")
                 total_loss += loss.item()
                 loss.backward()
-                check_nan_in_gradients(self.model)
+                self.check_nan_in_gradients(self.model)
                 optimizer.step()
                 del batch, outputs, loss  # Clear memory
                 
