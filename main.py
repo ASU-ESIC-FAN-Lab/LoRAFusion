@@ -68,7 +68,7 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
     result={}
     # result={'lorahub avg acc':{},'lorahub max acc':{}}
     # 5 seeds used in our experiments
-    for sub_dir in sub_dirs[:1]:
+    for sub_dir in sub_dirs[4:5]:
         # try:
             # if "boolean_expression" in sub_dir:
             #     continue
@@ -91,8 +91,6 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
             example_inputs, examples_outputs = example_inputs[:example_num], examples_outputs[:example_num]
             # separate the training and validation dataset
             train_inputs, train_outputs, valid_inputs, valid_outputs = separate_valid_dataset(example_inputs, examples_outputs, valid_ratio=0.05)
-            all_inputs=example_inputs+valid_inputs+train_inputs
-            all_outputs=examples_outputs+valid_outputs+train_outputs
             # load the zero-shot examples for evaluation
             test_file_path = os.path.join(folder, sub_dir, "zero_shot.jsonl")
             task_inputs, task_outputs = [], []
@@ -100,7 +98,8 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
                 example = json.loads(line)
                 task_inputs.append(example["context"])
                 task_outputs.append(example["completion"])
-
+            all_inputs=example_inputs+task_inputs
+            all_outputs=examples_outputs+task_outputs
             step_result={}
             for step in range(20,21,1):
                 for lora_num in range(2,3,1):
@@ -129,15 +128,17 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
                             model = myBaseLearner(train_input=train_inputs,
                                                     train_output=train_outputs,
                                                     max_step=step,
-                                                    batch_size=5,lr=lr,
+                                                    batch_size=1,
+                                                    lr=lr,
                                                     valid_input=valid_inputs,
                                                     valid_output=valid_outputs,
                                                     log_experiment=log_experiment,
                                                     prune=False,
                                                     early_stopping=False,
                                                     load_in_4bit=True)
-                            model.train()
-                            _, task_acc=model.inference(example_inputs=task_inputs, example_outputs=task_outputs)
+                            # model.train()
+                            # _, task_acc=model.inference(example_inputs=task_inputs, example_outputs=task_outputs)
+                            _, task_acc=model.inference(example_inputs=all_inputs, example_outputs=all_outputs)
                             class_name=model.__class__.__name__
                             del model
 
