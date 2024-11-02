@@ -215,7 +215,7 @@ class myBaseLearner:
         validation = validation and self.valid_dataloader is not None
         if self.quantization_config is not None:
             optimizer = bnb.optim.Adam(filter(lambda p: p.requires_grad, self.model.parameters()), 
-                                   lr=self.lr, optim_bits=32, percentile_clipping=95)
+                                   lr=self.lr, optim_bits=32, percentile_clipping=95,weight_decay=0.00001)
         else:
             optimizer = optim.Adam(filter(lambda p: p.requires_grad, self.model.parameters()), lr=self.lr,weight_decay=0.00001)
         # optimizer = bnb.optim.Adam8bit(filter(lambda p: p.requires_grad, self.model.parameters()), lr=self.lr

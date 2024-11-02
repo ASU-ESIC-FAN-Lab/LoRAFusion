@@ -5,6 +5,8 @@ from lorahub.algorithm3_dora_prune_quant import lorahub_learning, lorahub_infere
 from lorahub.baseLearner import myBaseLearner
 from lorahub.loraLearner import loraLeaner
 from lorahub.dorahubtmp import dorahubtmp
+from lorahub.doraLeaner import doraLeaner
+from lorahub.loraFusionLearner import loraFusionLearner
 from lorahub.constant import LORA_MODULE_NAMES
 import random
 from random import shuffle
@@ -103,13 +105,12 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
             all_outputs=examples_outputs+tuple(task_outputs)
             # print(len(all_inputs))
             step_result={}
-            for step in range(1,2,1):
+            for step in range(20,21,1):
                 for lora_num in range(20,21,1):
                     for lr_n in range(20,21,5):
                         lr=lr_n/1000
-                        lr=0.001
+                        lr=0.01
                         
-                        print(lr)
                         task_perf_list = []
 
                         if (step,lora_num,lr_n) not in result.keys():
@@ -118,7 +119,7 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
                         for seed in range(1,4):
                             if log_experiment:
                                 wandb_config={"epochs":step,"lr":lr_n ,"task_name":sub_dir,"seed":seed}
-                                wandb.init(project="dorahub",name=f"prune_test{sub_dir}",config=wandb_config)
+                                wandb.init(project="dorahub_dora4bit",name=f"{sub_dir}",config=wandb_config)
                             # lr=0.001
                             random.seed(seed)
                             print("Evaluating on task (lorahub): ", sub_dir, "with seed:", seed)
@@ -127,7 +128,7 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
                                 return random.sample(LORA_MODULE_NAMES, lora_num) #what 
                             # get a list of modules to be used in the composition
                             # print(f"Memory allocated for batch: {torch.cuda.memory_allocated('cuda')} bytes")
-                            model = loraLeaner(train_input=train_inputs,
+                            model = dorahubtmp(train_input=train_inputs,
                                                     train_output=train_outputs,
                                                     max_step=step,
                                                     batch_size=10,
@@ -140,8 +141,8 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
                                                     load_in_4bit=True)
                             # exit()
                             model.train()
-                            # _, task_acc=model.inference(example_inputs=task_inputs, example_outputs=task_outputs)
-                            _, task_acc=model.inference(example_inputs=all_inputs, example_outputs=all_outputs)
+                            _, task_acc=model.inference(example_inputs=task_inputs, example_outputs=task_outputs)
+                            # _, task_acc=model.inference(example_inputs=all_inputs, example_outputs=all_outputs)
                             class_name=model.__class__.__name__
                             del model
                             # print(f"Memory allocated for batch: {torch.cuda.memory_allocated('cuda')} bytes")
@@ -159,7 +160,7 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
                     print("average perf:", avg_perf, "best perf:", max_perf)
                     result[(step,lora_num,lr_n)]["lorahub avg acc"][sub_dir]=avg_perf
                     result[(step,lora_num,lr_n)]["lorahub max acc"][sub_dir]=max_perf
-                    save_name=f"epo{step}_train{example_num}_lora_num{lora_num}_lr{lr}_f{class_name}.csv"
+                    save_name=f"epo{step}_train{example_num}_lora_num{lora_num}_lr{lr}_f{class_name}_dt4bit.csv"
                     tmp_result=pd.DataFrame(result[(step,lora_num,lr_n)])
                     tmp_result.to_csv(os.path.join("results", save_name))
                     step_result[step]=(avg_perf,max_perf)
@@ -171,4 +172,4 @@ if __name__ == "__main__":
     result_folder = "results"
     lorahub_result,lorahub_result_df=evaluate_lorahub_results_few_shot("data_bbh", "google/flan-t5-large",log_experiment=False)
     # lorahub_result,lorahub_result_df=evaluate_lorahub_results_few_shot("data_bbh", "google/flan-t5-small")
-    lorahub_result_df.to_csv(os.path.join(result_folder, "lorahub_result_dora.csv"))
+    lorahub_result_df.to_csv(os.path.join(result_folder, "result.csv"))

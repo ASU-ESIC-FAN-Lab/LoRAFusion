@@ -22,6 +22,7 @@ import time
 import wandb
 from lorahub.baseLearner import myBaseLearner
 import bitsandbytes as bnb
+from lorahub.myQuantTensor4bit import myQuantTensor4bit
 
 class dorahubtmp(myBaseLearner):
     def __init__(self, model_name_or_path="google/flan-t5-large", 
@@ -59,12 +60,12 @@ class dorahubtmp(myBaseLearner):
                             log_experiment=log_experiment,
                             **kwargs)
     
-    def _load_model(self):
+    def _load_model(self,use_dora=True):
         base_model = super()._load_model(train_base=False)
         lora_module= LORA_MODULE_NAMES[0]
         lora_config = PeftConfig.from_pretrained(lora_module)
         dora_config=lora_config
-        dora_config.use_dora=True
+        dora_config.use_dora=use_dora
         #lord new lora model
         Dora_model = get_peft_model(base_model,dora_config)
         for name, param in base_model.named_parameters():
@@ -83,6 +84,11 @@ class dorahubtmp(myBaseLearner):
             # print("> Loading {} ...".format(peft_model_id))
             cur_peft_model = PeftModel.from_pretrained(tmp_model, peft_model_id)
             self.lora_dict_caches[peft_model_id] = copy.deepcopy(get_peft_model_state_dict(cur_peft_model))
+            #quantize the lora models
+            if self.quantization_config is not None:
+                for name, param in self.lora_dict_caches[peft_model_id].items():
+                    # print(param)
+                    param = myQuantTensor4bit(param)
 
             if first_dict is None:
                 first_dict = self.lora_dict_caches[peft_model_id]
@@ -96,8 +102,9 @@ class dorahubtmp(myBaseLearner):
         del tmp_model
         
         return Dora_model
-    def get_final_weights(self,weights, lora_module_list, cache):
-        final_state_dict = {}
+    @staticmethod
+    def merge_lora_module(weights, lora_module_list, cache):
+        merged_state_dict = {}
         keys = cache[lora_module_list[0]].keys()
         for i, peft_model_id in enumerate(lora_module_list):
             lora_state_dict = cache[peft_model_id]
@@ -105,29 +112,29 @@ class dorahubtmp(myBaseLearner):
                 for j,key in enumerate(keys):
                     if 'encoder' in key:
                         
-                        final_state_dict[key] = weights[i][j//4] * lora_state_dict[key]
+                        merged_state_dict[key] = weights[i][j//4] * lora_state_dict[key]
                     else:
-                        final_state_dict[key] = weights[i][j//8+12] * lora_state_dict[key]
+                        merged_state_dict[key] = weights[i][j//8+12] * lora_state_dict[key]
             else:
                 for j,key in enumerate(keys):
                     if 'encoder' in key:
-                        final_state_dict[key] = (
-                            final_state_dict[key] + weights[i][j//4] * lora_state_dict[key]
+                        merged_state_dict[key] = (
+                            merged_state_dict[key] + weights[i][j//4] * lora_state_dict[key]
                         )
                     else:
-                        final_state_dict[key] = (
-                            final_state_dict[key] + weights[i][j//8+12] * lora_state_dict[key]
+                        merged_state_dict[key] = (
+                            merged_state_dict[key] + weights[i][j//8+12] * lora_state_dict[key]
                         )
 
-        return final_state_dict   
+        return merged_state_dict   
      
     def train(self):
         num_blocks=len(self.lora_dict_caches[self.lora_module_list[0]].keys())//6
         # print("num_blocks:",num_blocks)
         
-        magnitude_params = []
+        params_magnitude = []
         #create a dummpy lora state dict for fusion of lora modules
-        final_state_dict = {}
+        merged_state_dict = {}
         keys = self.lora_dict_caches[self.lora_module_list[0]].keys()
         key_params_lookup = {} #lora parameter name to the corresponding lora weights in different lora modules
         model_param_name_lookup={}#lookup table for name and param of the base model
@@ -143,22 +150,19 @@ class dorahubtmp(myBaseLearner):
             if "lora_magnitude_vector" in name:
                 # print(name)
                 param.requires_grad = True
-                magnitude_params.append(param)
+                params_magnitude.append(param)
 
         #trainable parameter and optimizers
         params = torch.empty(self.lora_num, num_blocks, device=self.device, requires_grad=True)
         torch.nn.init.xavier_uniform_(params)
-        optimizer = optim.Adam([params], lr=self.lr, weight_decay=0.00000) #weight decay
-        # print(len(magnitude_params))
-        #create a empty dummy tensor for each parameter, test use only
-        magnitude_params2 = [torch.ones(len(magnitude_params), device=self.device, requires_grad=True)]
         if self.quantization_config is not None:
-            optimizer = bnb.optim.Adam(filter(lambda p: p.requires_grad, self.model.parameters()), 
-                                   lr=self.lr, optim_bits=32, percentile_clipping=95)
+            # optimizer = bnb.optim.Adam(filter(lambda p: p.requires_grad, self.model.parameters()), 
+            #                        lr=self.lr, optim_bits=32, percentile_clipping=95,weight_decay=0.00001)
+            optimizer_direction = bnb.optim.Adam([params],lr=self.lr,weight_decay=0.0000, percentile_clipping=95)
+            optimizer_magnitude = bnb.optim.Adam(params_magnitude, lr=0.005, percentile_clipping=95)
         else:
-            magnitude_optimizer = optim.Adam(magnitude_params, lr=0.005)
-        magnitude_mask = torch.ones(len(magnitude_params), device=self.device, requires_grad=False)
-
+            optimizer_direction = optim.Adam([params], lr=self.lr,weight_decay=0.00001)
+            optimizer_magnitude = optim.Adam(params_magnitude, lr=0.005,weight_decay=0.000)
 
         def update_lora():
             for i, peft_model_id in enumerate(self.lora_module_list):
@@ -166,27 +170,27 @@ class dorahubtmp(myBaseLearner):
                 if i == 0:
                     for j,key in enumerate(keys):
                         if 'encoder' in key:
-                            # print(final_state_dict[key].is_cuda)
-                            final_state_dict[key] = params[i][j//4] * lora_state_dict[key]
+                            # print(merged_state_dict[key].is_cuda)
+                            merged_state_dict[key] = params[i][j//4] * lora_state_dict[key]
                             key_params_lookup[key] = [(i,j//4,peft_model_id)]
                         
                         else:
-                            final_state_dict[key] = params[i][j//8+12] * lora_state_dict[key]
+                            merged_state_dict[key] = params[i][j//8+12] * lora_state_dict[key]
                             key_params_lookup[key] = [(i,j//8+12,peft_model_id)]
                 else:
                     for j,key in enumerate(keys):
                         if 'encoder' in key:
-                            final_state_dict[key] = (
-                                final_state_dict[key] + params[i][j//4] * lora_state_dict[key]
+                            merged_state_dict[key] = (
+                                merged_state_dict[key] + params[i][j//4] * lora_state_dict[key]
                             )
                             key_params_lookup[key].append((i,j//4,peft_model_id))
                         else:
-                            final_state_dict[key] = (
-                                final_state_dict[key] + params[i][j//8+12] * lora_state_dict[key]
+                            merged_state_dict[key] = (
+                                merged_state_dict[key] + params[i][j//8+12] * lora_state_dict[key]
                             )
                             key_params_lookup[key].append((i,j//8+12,peft_model_id))
             for name,param in model_param_name_lookup.items():
-                param.data.copy_(final_state_dict[name])
+                param.data.copy_(merged_state_dict[name])
                 # print(param.data)
                 param.grad = None
         
@@ -195,6 +199,7 @@ class dorahubtmp(myBaseLearner):
         patience = self.max_step//3
         warmup_steps = self.max_step//5
         patience_counter = 0
+        
         prune_step = 10
         best_loss = float("inf")
         best_params = None
@@ -204,8 +209,8 @@ class dorahubtmp(myBaseLearner):
             
             for _, batch in enumerate(self.train_dataloader):
                 # print(f"Memory allocated for batch: {torch.cuda.memory_allocated(device)} bytes")
-                optimizer.zero_grad()
-                magnitude_optimizer.zero_grad()
+                optimizer_direction.zero_grad()
+                optimizer_magnitude.zero_grad()
                 batch = {k: v.to(self.device) for k, v in batch.items()}
                 outputs = self.model(**batch)
                 # print(outputs)
@@ -218,12 +223,10 @@ class dorahubtmp(myBaseLearner):
                 # print(f"Memory allocated for batch: {torch.cuda.memory_allocated(device)} bytes")
                 l1reg=self.default_l1_regularization(params)
                 l1reg.backward()
-
-                
                 self.check_nan_in_gradients(self.model)
                 #apply mask
                 if self.prune:
-                    for i,param in enumerate(magnitude_params):
+                    for i,param in enumerate(params_magnitude):
                         param.data *= magnitude_mask[i]
                         #set grad to zero not None
                         if magnitude_mask[i] == 0:
@@ -233,10 +236,9 @@ class dorahubtmp(myBaseLearner):
                     for i,j,peft_model_id in key_params_lookup[name]:
                         # print(name,param.grad)
                         params.grad[i,j] += (param.grad * self.lora_dict_caches[peft_model_id][name]).sum()
-                # torch.nn.utils.clip_grad_norm_(params, 1.0) 
-                # torch.nn.utils.clip_grad_norm_(magnitude_params, 1.0)
-                optimizer.step()
-                magnitude_optimizer.step()
+
+                optimizer_direction.step()
+                optimizer_magnitude.step()
                 # nan=check_nan_in_parameters(model)
                 update_lora()
                 del batch, outputs, loss  # Clear memory
@@ -289,28 +291,28 @@ class dorahubtmp(myBaseLearner):
                     prune_rate = 0.15
                     if step == prune_step:
                         print("prune")
-                        magnitude = torch.cat([param.data for param in magnitude_params])
+                        magnitude = torch.cat([param.data for param in params_magnitude])
                         magnitude_abs = torch.abs(magnitude)
                         #save the magnitude distribution
-                        magnitude_distribution = magnitude_abs.cpu().numpy()
+                        # magnitude_distribution = magnitude_abs.cpu().numpy()
                         # np.save("magnitude_distribution.npy",magnitude_distribution)
                         #sort
                         sorted_magnitude, sorted_indices = torch.sort(magnitude_abs)
                         threshold = sorted_magnitude[int(len(sorted_magnitude)*prune_rate)]
                         magnitude_mask = (magnitude_abs >= threshold).float()
                     #apply mask
-                    for i,param in enumerate(magnitude_params):
+                    for i,param in enumerate(params_magnitude):
                         param.data *= magnitude_mask[i]
 
 
         
         
         optimized_weights = best_params.cpu().numpy()
-        final_lora = self.get_final_weights(optimized_weights, self.lora_module_list, self.lora_dict_caches)
+        final_lora = self.merge_lora_module(optimized_weights, self.lora_module_list, self.lora_dict_caches)
         # set the final weights
         set_peft_model_state_dict(self.model, final_lora)
         self.model = self.model.merge_and_unload()
-        # del params, optimizer,magnitude_optimizer, final_state_dict,final_lora,train_dataloader,dataset
+        # del params, optimizer,magnitude_optimizer, merged_state_dict,final_lora,train_dataloader,dataset
         # del key_params_lookup, model_param_name_lookup,optimized_weights,
 
                  
