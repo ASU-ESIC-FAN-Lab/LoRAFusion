@@ -74,7 +74,7 @@ class dorahubtmp(myBaseLearner):
         #save the initial state dict
         
         # lora_model.print_trainable_parameters()
-        tmp_model = AutoModelForSeq2SeqLM.from_pretrained(self.base_model_name,device_map='auto')
+        tmp_model = AutoModelForSeq2SeqLM.from_pretrained(self.base_model_name,device_map=self.device)
         #get random lora modules
         lora_module_list = random.sample(LORA_MODULE_NAMES, self.lora_num)
         self.lora_module_list = lora_module_list
@@ -170,7 +170,8 @@ class dorahubtmp(myBaseLearner):
                 if i == 0:
                     for j,key in enumerate(keys):
                         if 'encoder' in key:
-                            # print(merged_state_dict[key].is_cuda)
+                            # print(lora_state_dict[key].is_cuda)
+                            # print(params.is_cuda)
                             merged_state_dict[key] = params[i][j//4] * lora_state_dict[key]
                             key_params_lookup[key] = [(i,j//4,peft_model_id)]
                         

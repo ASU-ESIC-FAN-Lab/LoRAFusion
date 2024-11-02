@@ -71,7 +71,7 @@ class myBaseLearner:
             raise ValueError("model_name_or_path is required")
 
     def _load_model(self,train_base=True):
-        base_model = AutoModelForSeq2SeqLM.from_pretrained(self.base_model_name,quantization_config=self.quantization_config,device_map='auto')
+        base_model = AutoModelForSeq2SeqLM.from_pretrained(self.base_model_name,quantization_config=self.quantization_config,device_map=self.device)
         # if self.quantization_config is not None:
         #     base_model.to(self.device)
         self.tokenizer = AutoTokenizer.from_pretrained(self.base_model_name)
