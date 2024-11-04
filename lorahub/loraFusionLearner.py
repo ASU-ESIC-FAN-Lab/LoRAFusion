@@ -71,7 +71,7 @@ class loraFusionLearner(myBaseLearner):
         #save the initial state dict
         
         # lora_model.print_trainable_parameters()
-        tmp_model = AutoModelForSeq2SeqLM.from_pretrained(self.base_model_name,device_map='auto')
+        tmp_model = AutoModelForSeq2SeqLM.from_pretrained(self.base_model_name,device_map=self.device)
         #get random lora modules
         lora_module_list = random.sample(LORA_MODULE_NAMES, self.lora_num)
         self.lora_module_list = lora_module_list
@@ -272,7 +272,7 @@ class loraFusionLearner(myBaseLearner):
         final_lora = self.merge_lora_module(optimized_weights, self.lora_module_list, self.lora_dict_caches)
         # set the final weights
         set_peft_model_state_dict(self.model, final_lora)
-        self.model = self.model.merge_and_unload()
+        # self.model = self.model.merge_and_unload()
         # del params, optimizer,magnitude_optimizer, merged_state_dict,final_lora,train_dataloader,dataset
         # del key_params_lookup, model_param_name_lookup,optimized_weights,
 
