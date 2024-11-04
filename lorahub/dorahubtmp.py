@@ -163,6 +163,7 @@ class dorahubtmp(myBaseLearner):
         else:
             optimizer_direction = optim.Adam([params], lr=self.lr,weight_decay=0.00001)
             optimizer_magnitude = optim.Adam(params_magnitude, lr=0.005,weight_decay=0.000)
+        magnitude_mask = torch.ones(len(params_magnitude), device=self.device, requires_grad=False)
 
         def update_lora():
             for i, peft_model_id in enumerate(self.lora_module_list):
@@ -201,7 +202,7 @@ class dorahubtmp(myBaseLearner):
         warmup_steps = self.max_step//5
         patience_counter = 0
         
-        prune_step = 10
+        prune_step = self.max_step//2
         best_loss = float("inf")
         best_params = None
         # check_nan_in_parameters(model)
@@ -226,12 +227,12 @@ class dorahubtmp(myBaseLearner):
                 l1reg.backward()
                 self.check_nan_in_gradients(self.model)
                 #apply mask
-                if self.prune:
+                if self.prune and step > prune_step:
                     for i,param in enumerate(params_magnitude):
                         param.data *= magnitude_mask[i]
                         #set grad to zero not None
                         if magnitude_mask[i] == 0:
-                            param.grad = torch.zeros_like(param.data)
+                            param.grad = torch.zeros_like(param.grad.data)
                         # param.grad = torch.zeros_like(param.data)
                 for name, param in model_param_name_lookup.items():
                     for i,j,peft_model_id in key_params_lookup[name]:
@@ -306,7 +307,11 @@ class dorahubtmp(myBaseLearner):
                         param.data *= magnitude_mask[i]
 
 
-        
+        #check prune parameter is 0
+        # for i,param in enumerate(params_magnitude):
+        #     if magnitude_mask[i] == 0:
+        #         # print("prune parameter is 0")
+        #         print(param.data)
         
         optimized_weights = best_params.cpu().numpy()
         final_lora = self.merge_lora_module(optimized_weights, self.lora_module_list, self.lora_dict_caches)
