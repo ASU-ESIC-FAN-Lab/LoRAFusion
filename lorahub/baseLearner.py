@@ -24,7 +24,6 @@ class myBaseLearner:
                     train_output=None,
                     valid_input=None,
                     valid_output=None,
-                    prune=False,
                     early_stopping=False,
                     load_in_4bit=False,
                     load_in_8bit=False,

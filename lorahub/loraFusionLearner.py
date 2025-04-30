@@ -1,24 +1,12 @@
 from transformers import AutoModelForSeq2SeqLM
 import torch
-from datasets import Dataset
-from torch.utils.data import DataLoader
-from transformers import default_data_collator
-from transformers import AutoTokenizer,BitsAndBytesConfig
 from tqdm import tqdm
-import pandas as pd
-import numpy as np
 import random
-import nevergrad as ng
 from peft.utils.save_and_load import set_peft_model_state_dict, get_peft_model_state_dict
 from peft import PeftModel, PeftConfig,get_peft_model
-from functools import partial
-from typing import List, Optional, Union
 import copy
-from torch.autograd import Variable
 import torch.optim as optim
 from lorahub.constant import LORA_MODULE_NAMES
-import os
-import time
 import wandb
 from lorahub.baseLearner import myBaseLearner
 import bitsandbytes as bnb
@@ -34,7 +22,6 @@ class loraFusionLearner(myBaseLearner):
                     train_output=None,
                     valid_input=None,
                     valid_output=None,
-                    prune=False,
                     early_stopping=False,
                     load_in_4bit=False,
                     load_in_8bit=False,
@@ -52,7 +39,6 @@ class loraFusionLearner(myBaseLearner):
                             train_output=train_output,
                             valid_input=valid_input,
                             valid_output=valid_output,
-                            prune=prune,
                             early_stopping=early_stopping,
                             load_in_4bit=load_in_4bit,
                             load_in_8bit=load_in_8bit,

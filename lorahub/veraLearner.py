@@ -1,9 +1,9 @@
 
-from peft import  PeftConfig,get_peft_model
-from lorahub.constant import LORA_MODULE_NAMES
+
+from peft import get_peft_model,VeraConfig
 from lorahub.baseLearner import myBaseLearner
 
-class loraLeaner(myBaseLearner):
+class veraLearner(myBaseLearner):
     def __init__(self, model_name_or_path="google/flan-t5-large", 
                     batch_size=5,
                     seed=42,
@@ -35,15 +35,14 @@ class loraLeaner(myBaseLearner):
     
     def _load_model(self):
         base_model = super()._load_model(train_base=False)
-        lora_module= LORA_MODULE_NAMES[0]
-        lora_config = PeftConfig.from_pretrained(lora_module)
-        #lord new lora model
-        lora_model = get_peft_model(base_model,lora_config)
-        for name, param in base_model.named_parameters():
-            if "lora" in name:
+        vera_config=VeraConfig(r=128)
+        model=get_peft_model(base_model,vera_config)
+        model.eval()
+        for name, param in model.named_parameters():
+            if 'vera_lambda' in name:
                 param.requires_grad = True
         # lora_model.print_trainable_parameters()
-        return lora_model
+        return model
         
 
                  
