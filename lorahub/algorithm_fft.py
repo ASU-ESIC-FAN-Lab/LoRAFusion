@@ -37,13 +37,13 @@ def load_base_model_and_lora_modules(lora_module_list: List[str], model_name_or_
     if model_name_or_path is None:
         model_name_or_path = PeftConfig.from_pretrained(default_peft_model_id).base_model_name_or_path
         
-    base_model = AutoModelForSeq2SeqLM.from_pretrained(model_name_or_path)
+    base_model = AutoModelForSeq2SeqLM.from_pretrained(model_name_or_path,device_map='auto',quantization_config=None)
     # load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
     # 0 is the default model
 
         
-    base_model = base_model.to(device)
+    # base_model = base_model.to(device)
     base_model.train()
     # peft_model.eval()
     return base_model, tokenizer, None
@@ -208,6 +208,7 @@ def lorahub_inference(example_inputs: List[str],
         tokenizer = AutoTokenizer.from_pretrained(tokenizer_or_tokenizer_path)
     else:
         tokenizer = tokenizer_or_tokenizer_path
+    
             
     # for name, param in model.named_parameters():
     #     if "lora" not in name:
@@ -218,7 +219,8 @@ def lorahub_inference(example_inputs: List[str],
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = model.to(device)
 
-    for i in range(0, len(dataset["input"]), batch_size):
+    # for i in range(0, len(dataset["input"]), batch_size):
+    for i in tqdm(range(0, len(dataset["input"]), batch_size)):
         inputs = tokenizer(
             dataset["input"][i : i + batch_size],
             max_length=2048,
@@ -263,7 +265,7 @@ def lorahub_learning(lora_module_list: List[str],
 
     # load model
     model, tokenizer, cache = load_base_model_and_lora_modules(lora_module_list, model_name_or_path)
-
+    
     dataset = load_dataset(example_inputs, example_outputs, tokenizer) 
     data_batch_size = len(dataset) if batch_size is None else min(len(dataset), batch_size)
     train_dataloader = DataLoader(
@@ -272,17 +274,17 @@ def lorahub_learning(lora_module_list: List[str],
         batch_size=data_batch_size,
         pin_memory=True,  # If True, the data loader will copy tensors into CUDA pinned memory before returning them
     )
-    
     for name, param in model.named_parameters():
             # torch.nn.init.xavier_uniform_(param)
             param.requires_grad = True
     #print num of trainable parameters
+    return None, model, tokenizer
     print(sum(p.numel() for p in model.parameters() if p.requires_grad))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # torch.nn.init.xavier_uniform_(params)
     optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=lr,weight_decay=0.00001)
-
+    
     patience = 10
     best_loss = float("inf")
     best_params = None
@@ -291,16 +293,17 @@ def lorahub_learning(lora_module_list: List[str],
         total_loss = 0
         
         for _, batch in enumerate(train_dataloader):
-            # print(f"Memory allocated for batch: {torch.cuda.memory_allocated(device)} bytes")
+            print(f"Memory allocated for batch: {torch.cuda.memory_allocated(device)} bytes")
             optimizer.zero_grad()
             batch = {k: v.to(device) for k, v in batch.items()}
             outputs = model(**batch)
             loss = outputs.loss/len(batch["input_ids"])
-            # print(f"Memory allocated for batch: {torch.cuda.memory_allocated(device)} bytes")
+            print(f"Memory allocated for batch: {torch.cuda.memory_allocated(device)} bytes")
             total_loss += loss.item()
             loss.backward()
             optimizer.step()
             del batch, outputs, loss  # Clear memory
+            input("press any key to continue")
             # print("update time:",time.time()-starttime)
         avg_loss = total_loss / len(train_dataloader)
         if step % 1 == 0:

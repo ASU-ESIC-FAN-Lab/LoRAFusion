@@ -6,6 +6,7 @@ from lorahub.baseLearner import myBaseLearner
 from lorahub.loraLearner import loraLeaner
 from lorahub.dorahubtmp import dorahubtmp
 from lorahub.doraLeaner import doraLeaner
+from lorahub.veraLearner import veraLearner
 from lorahub.loraFusionLearner import loraFusionLearner
 from lorahub.constant import LORA_MODULE_NAMES
 import random
@@ -65,7 +66,7 @@ def separate_valid_dataset(example_inputs, examples_outputs, valid_ratio=0.1):
     valid_inputs, valid_outputs = example_inputs[:valid_num], examples_outputs[:valid_num]
     train_inputs, train_outputs = example_inputs[valid_num:], examples_outputs[valid_num:]
     return train_inputs, train_outputs, valid_inputs, valid_outputs
-def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results",log_experiment=False):
+def evaluate_lorahub_results_zero_shot(folder, flan_model_name,save_path="results",log_experiment=False):
     sub_dirs = os.listdir(folder)
     sub_dirs= sorted(sub_dirs)
     result={}
@@ -105,11 +106,11 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
             all_outputs=examples_outputs+tuple(task_outputs)
             # print(len(all_inputs))
             step_result={}
-            for step in range(20,21,1):
+            for step in range(5,6,1):
                 for lora_num in range(20,21,1):
                     for lr_n in range(20,21,5):
                         lr=lr_n/1000
-                        lr=0.01
+                        lr=0.02
                         
                         task_perf_list = []
 
@@ -128,7 +129,7 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
                                 return random.sample(LORA_MODULE_NAMES, lora_num) #what 
                             # get a list of modules to be used in the composition
                             # print(f"Memory allocated for batch: {torch.cuda.memory_allocated('cuda')} bytes")
-                            model = dorahubtmp(train_input=train_inputs,
+                            model = veraLearner(train_input=train_inputs,
                                                     train_output=train_outputs,
                                                     max_step=step,
                                                     batch_size=10,
@@ -138,8 +139,7 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
                                                     log_experiment=log_experiment,
                                                     prune=False,
                                                     early_stopping=False,
-                                                    load_in_4bit=True)
-                            # exit()
+                                                    load_in_4bit=False)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       
                             model.train()
                             _, task_acc=model.inference(example_inputs=task_inputs, example_outputs=task_outputs)
                             # _, task_acc=model.inference(example_inputs=all_inputs, example_outputs=all_outputs)
@@ -170,6 +170,5 @@ def evaluate_lorahub_results_few_shot(folder, flan_model_name,save_path="results
     return result,result_pd
 if __name__ == "__main__":
     result_folder = "results"
-    lorahub_result,lorahub_result_df=evaluate_lorahub_results_few_shot("data_bbh", "google/flan-t5-large",log_experiment=False)
-    # lorahub_result,lorahub_result_df=evaluate_lorahub_results_few_shot("data_bbh", "google/flan-t5-small")
+    lorahub_result,lorahub_result_df=evaluate_lorahub_results_zero_shot("data_bbh", "google/flan-t5-large",log_experiment=False)
     lorahub_result_df.to_csv(os.path.join(result_folder, "result.csv"))

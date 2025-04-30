@@ -212,14 +212,15 @@ class loraFusionLearner(myBaseLearner):
                 self.check_nan_in_gradients(self.model)
                 for name, param in model_param_name_lookup.items():
                     for i,j,peft_model_id in key_params_lookup[name]:
-                        # print(name,param.grad)
-                        params.grad[i,j] += (param.grad * self.lora_dict_caches[peft_model_id][name]).sum()
+                        # print(name,params[i,j])
+                        params.grad[i,j] += 2* params.data[i,j] * (param.grad * self.lora_dict_caches[peft_model_id][name]).sum()
 
                 optimizer_direction.step()
                 # nan=check_nan_in_parameters(model)
                 update_lora()
                 del batch, outputs, loss  # Clear memory
                 # print("update time:",time.time()-starttime)
+                # print("test")
             avg_train_loss = total_loss / len(self.train_dataloader) + l1reg.item()
             #valid loss
             _, valid_acc = self.inference(dataset=self.valid_dataset)
