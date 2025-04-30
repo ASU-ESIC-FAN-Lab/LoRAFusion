@@ -2,10 +2,13 @@
 __pycache__/
 *.py[cod]
 *$py.class
-
+local_lora_modules
+logs
+tmp
+lorahub/old
 # C extensions
 *.so
-
+lorahub/old
 # Distribution / packaging
 wandb/
 .history
