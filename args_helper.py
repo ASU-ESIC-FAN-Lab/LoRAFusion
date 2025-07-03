@@ -13,8 +13,8 @@ def parse_args():
                         help='number of LoRA module to use (default: 20)')
     parser.add_argument('--log', action='store_true',
                         help='Whether to log the experiment using wandb (default: False)')
-    parser.add_argument('--es', action='store_true',
-                        help='Enable early stopping (default: False)')
+    # parser.add_argument('--es', action='store_true',
+    #                     help='Enable early stopping (default: False)')
     parser.add_argument('--load_in_4bit', action='store_true',
                         help='Load model in 4-bit precision (default: False)')
 
