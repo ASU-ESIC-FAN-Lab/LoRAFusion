@@ -1,7 +1,7 @@
 
 from peft import  PeftConfig,get_peft_model
-from lorahub.constant import LORA_MODULE_NAMES
-from lorahub.baseLearner import myBaseLearner
+from LoRAs.constant import LORA_MODULE_NAMES
+from LoRAs.baseLearner import myBaseLearner
 
 class loraLeaner(myBaseLearner):
     def __init__(self, model_name_or_path="google/flan-t5-large", 

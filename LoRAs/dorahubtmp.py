@@ -1,18 +1,30 @@
 from transformers import AutoModelForSeq2SeqLM
 import torch
+from datasets import Dataset
+from torch.utils.data import DataLoader
+from transformers import default_data_collator
+from transformers import AutoTokenizer,BitsAndBytesConfig
 from tqdm import tqdm
+import pandas as pd
+import numpy as np
 import random
+import nevergrad as ng
 from peft.utils.save_and_load import set_peft_model_state_dict, get_peft_model_state_dict
 from peft import PeftModel, PeftConfig,get_peft_model
+from functools import partial
+from typing import List, Optional, Union
 import copy
+from torch.autograd import Variable
 import torch.optim as optim
-from lorahub.constant import LORA_MODULE_NAMES
+from LoRAs.constant import LORA_MODULE_NAMES
+import os
+import time
 import wandb
-from lorahub.baseLearner import myBaseLearner
+from LoRAs.baseLearner import myBaseLearner
 import bitsandbytes as bnb
-from lorahub.myQuantTensor4bit import myQuantTensor4bit
+from LoRAs.myQuantTensor4bit import myQuantTensor4bit
 
-class loraFusionLearner(myBaseLearner):
+class dorahubtmp(myBaseLearner):
     def __init__(self, model_name_or_path="google/flan-t5-large", 
                     batch_size=5,
                     seed=42,
@@ -22,6 +34,7 @@ class loraFusionLearner(myBaseLearner):
                     train_output=None,
                     valid_input=None,
                     valid_output=None,
+                    prune=False,
                     early_stopping=False,
                     load_in_4bit=False,
                     load_in_8bit=False,
@@ -30,6 +43,7 @@ class loraFusionLearner(myBaseLearner):
                     **kwargs):
         self.lora_num = lora_num
         self.lora_module_list = None
+        self.prune=prune
         super().__init__(model_name_or_path=model_name_or_path,
                             batch_size=batch_size,
                             seed=seed,
@@ -39,18 +53,21 @@ class loraFusionLearner(myBaseLearner):
                             train_output=train_output,
                             valid_input=valid_input,
                             valid_output=valid_output,
+                            prune=prune,
                             early_stopping=early_stopping,
                             load_in_4bit=load_in_4bit,
                             load_in_8bit=load_in_8bit,
                             log_experiment=log_experiment,
                             **kwargs)
     
-    def _load_model(self):
+    def _load_model(self,use_dora=True):
         base_model = super()._load_model(train_base=False)
         lora_module= LORA_MODULE_NAMES[0]
         lora_config = PeftConfig.from_pretrained(lora_module)
-
-        lora_model = get_peft_model(base_model,lora_config)
+        dora_config=lora_config
+        dora_config.use_dora=use_dora
+        #lord new lora model
+        Dora_model = get_peft_model(base_model,dora_config)
         for name, param in base_model.named_parameters():
             if "lora" in name:
                 param.requires_grad = True
@@ -84,7 +101,7 @@ class loraFusionLearner(myBaseLearner):
                 raise Exception(f'LoRA Modules {peft_model_id} cannot be merged since it has a different arch (e.g., rank).')
         del tmp_model
         
-        return lora_model
+        return Dora_model
     @staticmethod
     def merge_lora_module(weights, lora_module_list, cache):
         merged_state_dict = {}
@@ -130,14 +147,23 @@ class loraFusionLearner(myBaseLearner):
                 if name_processed in self.lora_dict_caches[self.lora_module_list[0]]:
                     model_param_name_lookup[name_processed]=param
                     param.requires_grad = True
+            if "lora_magnitude_vector" in name:
+                # print(name)
+                param.requires_grad = True
+                params_magnitude.append(param)
 
         #trainable parameter and optimizers
         params = torch.empty(self.lora_num, num_blocks, device=self.device, requires_grad=True)
         torch.nn.init.xavier_uniform_(params)
         if self.quantization_config is not None:
+            # optimizer = bnb.optim.Adam(filter(lambda p: p.requires_grad, self.model.parameters()), 
+            #                        lr=self.lr, optim_bits=32, percentile_clipping=95,weight_decay=0.00001)
             optimizer_direction = bnb.optim.Adam([params],lr=self.lr,weight_decay=0.0000, percentile_clipping=95)
+            optimizer_magnitude = bnb.optim.Adam(params_magnitude, lr=0.005, percentile_clipping=95)
         else:
             optimizer_direction = optim.Adam([params], lr=self.lr,weight_decay=0.00001)
+            optimizer_magnitude = optim.Adam(params_magnitude, lr=0.005,weight_decay=0.000)
+        magnitude_mask = torch.ones(len(params_magnitude), device=self.device, requires_grad=False)
 
         def update_lora():
             for i, peft_model_id in enumerate(self.lora_module_list):
@@ -145,7 +171,8 @@ class loraFusionLearner(myBaseLearner):
                 if i == 0:
                     for j,key in enumerate(keys):
                         if 'encoder' in key:
-                            # print(merged_state_dict[key].is_cuda)
+                            # print(lora_state_dict[key].is_cuda)
+                            # print(params.is_cuda)
                             merged_state_dict[key] = params[i][j//4] * lora_state_dict[key]
                             key_params_lookup[key] = [(i,j//4,peft_model_id)]
                         
@@ -174,6 +201,8 @@ class loraFusionLearner(myBaseLearner):
         patience = self.max_step//3
         warmup_steps = self.max_step//5
         patience_counter = 0
+        
+        prune_step = self.max_step//2
         best_loss = float("inf")
         best_params = None
         # check_nan_in_parameters(model)
@@ -183,6 +212,7 @@ class loraFusionLearner(myBaseLearner):
             for _, batch in enumerate(self.train_dataloader):
                 # print(f"Memory allocated for batch: {torch.cuda.memory_allocated(device)} bytes")
                 optimizer_direction.zero_grad()
+                optimizer_magnitude.zero_grad()
                 batch = {k: v.to(self.device) for k, v in batch.items()}
                 outputs = self.model(**batch)
                 # print(outputs)
@@ -196,17 +226,25 @@ class loraFusionLearner(myBaseLearner):
                 l1reg=self.default_l1_regularization(params)
                 l1reg.backward()
                 self.check_nan_in_gradients(self.model)
+                #apply mask
+                if self.prune and step > prune_step:
+                    for i,param in enumerate(params_magnitude):
+                        param.data *= magnitude_mask[i]
+                        #set grad to zero not None
+                        if magnitude_mask[i] == 0:
+                            param.grad = torch.zeros_like(param.grad.data)
+                        # param.grad = torch.zeros_like(param.data)
                 for name, param in model_param_name_lookup.items():
                     for i,j,peft_model_id in key_params_lookup[name]:
-                        # print(name,params[i,j])
-                        params.grad[i,j] += 2* params.data[i,j] * (param.grad * self.lora_dict_caches[peft_model_id][name]).sum()
+                        # print(name,param.grad)
+                        params.grad[i,j] += (param.grad * self.lora_dict_caches[peft_model_id][name]).sum()
 
                 optimizer_direction.step()
+                optimizer_magnitude.step()
                 # nan=check_nan_in_parameters(model)
                 update_lora()
                 del batch, outputs, loss  # Clear memory
                 # print("update time:",time.time()-starttime)
-                # print("test")
             avg_train_loss = total_loss / len(self.train_dataloader) + l1reg.item()
             #valid loss
             _, valid_acc = self.inference(dataset=self.valid_dataset)
@@ -250,10 +288,30 @@ class loraFusionLearner(myBaseLearner):
                 print(f"Step {step}, train loss {avg_train_loss}")
             
             #calculate mask based on the asb value of the magnitude vector, prune the 15% smallest value
+            if self.prune:
+                with torch.no_grad():
+                    prune_rate = 0.15
+                    if step == prune_step:
+                        print("prune")
+                        magnitude = torch.cat([param.data for param in params_magnitude])
+                        magnitude_abs = torch.abs(magnitude)
+                        #save the magnitude distribution
+                        # magnitude_distribution = magnitude_abs.cpu().numpy()
+                        # np.save("magnitude_distribution.npy",magnitude_distribution)
+                        #sort
+                        sorted_magnitude, sorted_indices = torch.sort(magnitude_abs)
+                        threshold = sorted_magnitude[int(len(sorted_magnitude)*prune_rate)]
+                        magnitude_mask = (magnitude_abs >= threshold).float()
+                    #apply mask
+                    for i,param in enumerate(params_magnitude):
+                        param.data *= magnitude_mask[i]
 
 
-
-        
+        #check prune parameter is 0
+        # for i,param in enumerate(params_magnitude):
+        #     if magnitude_mask[i] == 0:
+        #         # print("prune parameter is 0")
+        #         print(param.data)
         
         optimized_weights = best_params.cpu().numpy()
         final_lora = self.merge_lora_module(optimized_weights, self.lora_module_list, self.lora_dict_caches)

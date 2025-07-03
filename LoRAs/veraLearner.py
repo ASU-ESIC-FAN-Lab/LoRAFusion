@@ -1,7 +1,7 @@
 
 
 from peft import get_peft_model,VeraConfig
-from lorahub.baseLearner import myBaseLearner
+from LoRAs.baseLearner import myBaseLearner
 
 class veraLearner(myBaseLearner):
     def __init__(self, model_name_or_path="google/flan-t5-large", 

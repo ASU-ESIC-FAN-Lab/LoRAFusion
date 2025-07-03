@@ -1,9 +1,9 @@
 
 from peft import PeftConfig,get_peft_model
 import torch.optim as optim
-from lorahub.constant import LORA_MODULE_NAMES
+from LoRAs.constant import LORA_MODULE_NAMES
 import wandb
-from lorahub.baseLearner import myBaseLearner
+from LoRAs.baseLearner import myBaseLearner
 import bitsandbytes as bnb
 
 class doraLeaner(myBaseLearner):

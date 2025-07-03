@@ -1,11 +1,11 @@
 import os
 import json
-from lorahub.baseLearner import myBaseLearner
-from lorahub.loraLearner import loraLeaner
-from lorahub.doraLeaner import doraLeaner
-from lorahub.veraLearner import veraLearner
-from lorahub.loraFusionLearner import loraFusionLearner
-from lorahub.constant import LORA_MODULE_NAMES
+from LoRAs.baseLearner import myBaseLearner
+from LoRAs.loraLearner import loraLeaner
+from LoRAs.doraLeaner import doraLeaner
+from LoRAs.veraLearner import veraLearner
+from LoRAs.loraFusionLearner import loraFusionLearner
+from LoRAs.constant import LORA_MODULE_NAMES
 from args_helper import parse_args
 import random
 import pandas as pd
